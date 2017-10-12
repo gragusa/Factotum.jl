@@ -1,4 +1,4 @@
 # Factotum
 
-`Factutum` is a simple package to estimate static factor models. 
+`Factutum` is a simple package for estimating static factor models in `Julia`
 
