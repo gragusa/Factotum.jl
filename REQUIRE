@@ -3,6 +3,6 @@ StatsBase
 IterTools
 Distributions
 PDMats
-NLModels
+NLPModels
 MathProgBase
 Ipopt
