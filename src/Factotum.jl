@@ -54,6 +54,7 @@ end
 
 abstract type SelectionCriteria end
 
+
 struct ICp1 <: SelectionCriteria end
 struct ICp2 <: SelectionCriteria end
 struct ICp3 <: SelectionCriteria end
@@ -71,24 +72,24 @@ struct BIC2 <: SelectionCriteria end
 struct BIC3 <: SelectionCriteria end
 
 
-function calculate_residual(fm::FactorModel, k)
-    T, N = size(fm.X)
-    F = view(fm.F, :, 1:k)
-    ## X = fm.X
-    ## Λ = F\X
-    Λ = view(fm.Λ, :, 1:k)    
-    (fm.X .- F*Λ')
-end
+# function calculate_residual(fm::FactorModel, k)
+#     T, N = size(fm.X)
+#     F = view(fm.factors, :, 1:k)
+#     ## X = fm.X
+#     ## Λ = F\X
+#     Λ = view(fm.loadings, :, 1:k)    
+#     (fm.X .- F*Λ')
+# end
 
-function calculate_residual_variance(fm::FactorModel, k)
-    T, N = size(fm.X)
-    F = view(fm.F, :, 1:k)
-    ## X = fm.X
-    ## Λ = F\X
-    Λ = view(fm.Λ, :, 1:k)    
-    fm.r .= (fm.X .- F*Λ')
-    sum(fm.r.^2)/(T*N)
-end
+# function calculate_residual_variance(fm::FactorModel, k)
+#     T, N = size(fm.X)
+#     F = view(fm.factors, :, 1:k)
+#     ## X = fm.X
+#     ## Λ = F\X
+#     Λ = view(fm.loadings, :, 1:k)    
+#     fm.r .= (fm.X .- F*Λ')
+#     sum(fm.r.^2)/(T*N)
+# end
 
 function FactorModel(Z::Matrix{Float64}; kwargs...)
     (factors, 
@@ -192,17 +193,20 @@ function Base.show(io::IO, fm::FactorModel)
     #@printf io "------------------------------------------------------\n"
 end
 
-function factortable(fm::FactorModel)
+function factortable(io::IO, fm::FactorModel)
     colnms = "Factor_".*string.(1:numfactor(fm))
     rownms = ["Standard deviation", "Proportion of Variance", "Cumulative Proportion"]
     mat = vcat(sdev(fm)', fm.explained_variance', cumsum(fm.explained_variance)')
-    CoefTable(mat, colnms, rownms)
+    ct = CoefTable(mat, colnms, rownms)
+    show(io, ct)
 end
 
-function describe(fm::FactorModel)
-    show(fm)
-    print_with_color(:green, "Factors' importance:\n")
-    factortable(fm)    
+describe(fm::FactorModel) = describe(STDOUT::IO, fm)
+
+function describe(io::IO, fm::FactorModel)
+    show(io, fm)
+    print_with_color(:green, io, "Factors' importance:\n")
+    factortable(io, fm)
 end
 
 struct Criteria{M <: SelectionCriteria}
@@ -211,13 +215,21 @@ struct Criteria{M <: SelectionCriteria}
     kmax::UnitRange{Int64}
 end
 
+variance_factor(::Type{M}, fm, kmax) where M <: Union{ICp1, ICp2, ICp3} = 1.0
+variance_factor(::Type{M}, fm, kmax) where M <: SelectionCriteria = residual_variance(fm, kmax)
+
+transform_V(::Type{M}, V) where M <: Union{ICp1, ICp2, ICp3} = log.(V)
+transform_V(::Type{M}, V) where M <: SelectionCriteria = V
+
 function Criteria(s::Type{M}, fm::FactorModel, kmax::Int64) where M <: SelectionCriteria
     T, n = size(fm.X)
-    rnge = 0:kmax 
+    rnge = 0:kmax
+    σ̂² = variance_factor(M, fm, kmax)
     models = map(k -> subview(fm, k), rnge)
     Vₖ = map(x -> residual_variance(x), models)
-    gₜₙ= penalty(s, T, n)
-    Criteria(M(), Vₖ + (rnge).*gₜₙ, rnge)
+    Vₖ = transform_V(M, Vₖ)
+    gₜₙ= map(k -> penalty(s, T, n, k), rnge)
+    Criteria(M(), Vₖ + σ̂².*(rnge).*gₜₙ, rnge)
 end
 
 function Base.show(io::IO, c::T) where T <: Criteria
@@ -228,7 +240,7 @@ function Base.show(io::IO, c::T) where T <: Criteria
     show(io, ct)
 end
 
-function penalty(s::Type{ICp1}, T, N)
+function penalty(s::Type{P}, T, N, k) where P <: Union{ICp1, PCp1}
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -236,7 +248,7 @@ function penalty(s::Type{ICp1}, T, N)
     p1*p2
 end
 
-function penalty(s::Type{ICp2}, T, N)
+function penalty(s::Type{P}, T, N, k) where P <: Union{ICp2, PCp2}
     C2  = min(T, N)
     NtT = N*T
     NpT = N+T
@@ -245,10 +257,19 @@ function penalty(s::Type{ICp2}, T, N)
     p1*p2
 end
 
-function penalty(s::Type{ICp3}, T, N)
+function penalty(s::Type{P}, T, N, k) where P <: Union{ICp3, PCp3}
     C2  = min(T, N)    
     log(C2)/C2
 end
+
+penalty(s::Type{AIC1}, T, N, k) = 2/T
+penalty(s::Type{AIC2}, T, N, k) = 2/N
+penalty(s::Type{AIC3}, T, N, k) = 2*(N+T-k)/(N*T)
+
+penalty(s::Type{BIC1}, T, N, k) = log(T)/T
+penalty(s::Type{BIC2}, T, N, k) = log(N)/N
+penalty(s::Type{BIC3}, T, N, k) = 2*((N+T-k)*log(N*T))/(N*T)
+
 
 struct WaldTest
     W::Float64
@@ -281,8 +302,8 @@ function waldtest(fm::FactorModel, knull::Int64; solver = IpoptSolver())
     x0 =  [ vec(Λ); vec(diag((X .- F*Λ')'*(X .- F*Λ')/T)) ]
 
     nlp = ADNLPModel(fobj, x0, 
-                lvar = [repeat([-Inf], outer = n*knull); repeat([0.00001], outer = n)],
-                uvar = [repeat([+Inf], outer = n*knull); repeat([2], outer = n)])
+                lvar = [repeat([-Inf], outer = n*knull); repeat([0.0000001], outer = n)],
+                uvar = [repeat([+Inf], outer = n*knull); repeat([+Inf], outer = n)])
 
     mb = NLPtoMPB(nlp, solver)
 
@@ -341,8 +362,13 @@ function vech(X::Matrix{S}) where S
     end
     x
 end
-     
-export FactorModel, subview, waldtest, describe, PValue, waldstat, ICp1, ICp2, ICp3, Criteria
+ 
+
+export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
+       ICp1, ICp2, ICp3, PCp1, PCp2, PCp3, 
+       AIC1, AIC2, AIC3, BIC1, BIC2, BIC3
+
+
 
 
 end # module
