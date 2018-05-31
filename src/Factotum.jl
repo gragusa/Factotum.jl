@@ -289,14 +289,14 @@ function waldtest(fm::FactorModel, knull::Int64; solver = IpoptSolver())
     Λ  = Factotum.loadings(fm, knull)
     F  = Factotum.factors(fm, knull)
     Σₓ = Factotum.vech(X'X/T)
-    Ω  = PDMat(Factotum.calculate_variance_of_xx(X))
-
+    #Ω  = PDMat(Factotum.calculate_variance_of_xx(X))
+    Ω   = pinv(Factotum.calculate_variance_of_xx(X))
     function fobj(parms)
         ## Parms are n*k0 (\Lambda) e n variances of 
         Λ = reshape(parms[1:n*knull], n, knull)
         ϵ = diagm(parms[n*knull+1:end])
         v = Σₓ - Factotum.vech(Λ*Λ' + ϵ)
-        invquad(Ω, v)
+        v'*Ω*v
     end
 
     x0 =  [ vec(Λ); vec(diag((X .- F*Λ')'*(X .- F*Λ')/T)) ]
