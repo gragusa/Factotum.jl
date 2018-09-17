@@ -4,7 +4,6 @@ using IterTools
 using Distributions 
 using PDMats
 using StatsBase
-using NLPModels
 using Optim
 using DataFrames
 import StatsBase: residuals, fit
