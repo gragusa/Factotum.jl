@@ -2,7 +2,6 @@ module Factotum
 
 using IterTools
 using Distributions 
-using PDMats
 using StatsBase
 using Optim
 using DataFrames
