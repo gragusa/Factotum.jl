@@ -2,11 +2,9 @@ module Factotum
 
 using IterTools
 using Distributions 
-using PDMats
 using StatsBase
-using NLPModels
-using Ipopt
-using MathProgBase
+using Optim
+using DataFrames
 import StatsBase: residuals, fit
 
 function staticfactor(Z; demean::Bool = true, scale::Bool = false)
@@ -31,7 +29,7 @@ function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     ## Stored in reverse order
     λ  = ev.values[n:-1:1]
     σ  = sqrt.(λ/T)
-    Vₖ = σ.^2./sum(σ.^2) 
+    Vₖ = (σ.^2)./sum(σ.^2) 
     Λ = sqrt(n).*ev.vectors[:, n:-1:1]
     F = X*Λ/n
     (F, Λ, λ, σ, Vₖ, X, n, μ, σ)
@@ -272,84 +270,86 @@ penalty(s::Type{BIC3}, T, N, k) = 2*((N+T-k)*log(N*T))/(N*T)
 
 
 struct WaldTest
-    W::Float64
-    pvalue::Float64
-    knull::Int64
-    status::Symbol
-    solver::MathProgBase.SolverInterface.AbstractMathProgSolver
+    tbl::DataFrame
+    rankmin::Int64
+    rankmax::Int64
 end
 
-function waldtest(fm::FactorModel, knull::Int64; solver = IpoptSolver())
-    X = fm.X
+struct WaldTestFun{F, T, Z}
+    f::F
+    r::Int64
+    vecsigma::T
+    Vhat::Z
+end
+
+(wf::WaldTestFun)(theta) = wf.f(theta, wf.r, wf.vecsigma, wf.Vhat)
+
+function waldobjfun(th, r, vecsigma, Vhat)
+    ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
+    theta = reshape(th, r+1, length(th)÷(r+1))
+    sigmamat = diagm(theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
+    tempsigma = sigmamat[find(tril(ones(size(sigmamat))))]
+    (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma) 
+end
+
+function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
+    X = copy(fm.X)
     T, n = size(X)
-    df = n*(n+1)/2 - (n*knull + n) + knull*(knull-1)/2
+    ## Normalize factor    
+    Xs = X / diagm(sqrt.(diag(cov(X))))
+    covX = cov(Xs)
+    meanX = mean(Xs, 1)
+    vecsigma = Factotum.vech(covX)
+    bigN = length(vecsigma)
+    Vhat = Array{Float64}(bigN, bigN)
+    varvecsig = zeros(n,n,n,n);
 
-    @assert df > 0 "Cannot perform wald test. df <= 0"
+    for i1 in 1:n, i2 = 1:n, i3 = 1:n, i4 = 1:n 
+        varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] - meanX[i1]).*(Xs[:,i2] - meanX[i2]).*(Xs[:,i3] - meanX[i3]) .*(Xs[:,i4] - meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T 
+    end 
 
-    Λ  = Factotum.loadings(fm, knull)
-    F  = Factotum.factors(fm, knull)
-    Σₓ = Factotum.vech(X'X/T)
-    #Ω  = PDMat(Factotum.calculate_variance_of_xx(X))
-    Ω   = pinv(Factotum.calculate_variance_of_xx(X))
-    function fobj(parms)
-        ## Parms are n*k0 (\Lambda) e n variances of 
-        Λ = reshape(parms[1:n*knull], n, knull)
-        ϵ = diagm(parms[n*knull+1:end])
-        v = Σₓ - Factotum.vech(Λ*Λ' + ϵ)
-        v'*Ω*v
+    index1, index2 = ind2sub(size(covX),find(tril(ones(size(covX)))))
+
+    for i=1:bigN, j=1:bigN   ## map elements of varvecsig array into matrix corresponding to
+          Vhat[i,j] = varvecsig[index1[i],index2[i],index1[j],index2[j]]
     end
 
-    x0 =  [ vec(Λ); vec(diag((X .- F*Λ')'*(X .- F*Λ')/T)) ]
 
-    nlp = ADNLPModel(fobj, x0, 
-                lvar = [repeat([-Inf], outer = n*knull); repeat([0.0000001], outer = n)],
-                uvar = [repeat([+Inf], outer = n*knull); repeat([+Inf], outer = n)])
+    out_table = DataFrame(rank = -1, waldstat = NaN, df = NaN, critval = NaN, pvalue = NaN)
 
-    mb = NLPtoMPB(nlp, solver)
+    ## Initial values
+    for k in minrank:maxrank
+        wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)        
+        df = (n-k)*(n-k+1)/2 - n 
 
-    MathProgBase.optimize!(mb)
+        theta0 = theta_initial_value(n,k)
+        
+        outs = Array{Tuple{Float64,Array{Float64,1},Bool},1}()
 
-    x  = MathProgBase.SolverInterface.getsolution(mb)
-    W  = MathProgBase.SolverInterface.getobjval(mb)
-    status = MathProgBase.SolverInterface.status(mb)
-
-    if status != :Optimal
-        warn("The optimazation did not converge. Use the results with care")
-    end
-
-    pvalue = 1-cdf(Chisq(df), W)
-    WaldTest(W, pvalue, knull, status, solver)
-end
-
-StatsBase.PValue(w::WaldTest) = w.pvalue
-waldstat(w::WaldTest) = w.W
-
-function Base.show(io::IO, w::WaldTest)
-    colnms = ["Wald stat", " Pr(>W)"]
-    mat = [w.W w.pvalue]
-    rownms = [""]
-    ct = StatsBase.CoefTable(mat, colnms, rownms, 2)
-    @printf io "Wald test [Null:] H₀:k=%s\n" w.knull
-    show(io, ct)
-end
-
-function calculate_variance_of_xx(X::Array{S,2}) where S <: Real
-    ## X has mean zeros along dimension 1
-    T, n = size(X)
-    σₓ = X'X/T
-    
-    itr = (((k,j) for j in 1:n for k in j:n))    
-    r  = round(Int64, n*(n+1)/2)
-    V = zeros(r^2)
-    i = 1
-    for ((k,j),(l,m)) in product(itr,itr)
-        for t = 1:T
-            V[i] += (X[t,j]*X[t,k]-σₓ[j,k])*(X[t,l]*X[t,m]-σₓ[l,m])
+        for j in theta0
+            out = Optim.optimize(wf, j, BFGS(), Optim.Options(allow_f_increases=true); autodiff=:forward)
+            push!(outs, (out.minimum::Float64, out.minimizer::Array{Float64,1}, Optim.converged(out)::Bool))
         end
-        i += 1
+
+        convouts = outs[map(x->x[3], outs)]
+        out      = convouts[indmin(map(x->x[1], convouts))]
+
+        chisq = Chisq(df)
+        dfa = DataFrame(rank = k, waldstat = out[1], df = df, critval = Distributions.quantile(chisq, .95), pvalue = 1-Distributions.cdf(chisq, out[1]))
+        append!(out_table, dfa)
     end
-    reshape(V./T^2, r, r)
+    filter!(raw->raw[:rank]>0, out_table)
+    WaldTest(out_table, minrank, maxrank)
 end
+
+function theta_initial_value(n,k)
+    I3 = ones(1,n)/3
+    ek = eye(k,n)
+    t0 = ([I3; zeros(k,n)], [I3; ones(k,n)/(2*k)],[I3; ek/(2*k)], [I3; flipdim(ek/(2*k),2)])::NTuple{4,Array{Float64,2}}
+    map(vec, t0)::NTuple{4,Array{Float64,1}}
+end
+
+
 
 function vech(X::Matrix{S}) where S
     T, n = size(X)
@@ -372,3 +372,10 @@ export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
 
 
 end # module
+
+
+
+
+mintheta = [0.3208    0.1820    0.2128    0.2777    0.1741    0.0915    0.0787    0.0776 -0.4514   -0.5289   -0.3863   -0.2335   -0.0371   -0.2107   -0.2413   -0.2588 -0.0151   -0.1772   -0.2952   -0.4432   -0.5602   -0.6001   -0.6362   -0.6466]
+
+montheta = reshape(mintheta, 8, 3)'
