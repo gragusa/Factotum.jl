@@ -29,7 +29,7 @@ function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     ## Stored in reverse order
     λ  = ev.values[n:-1:1]
     σ  = sqrt.(λ/T)
-    Vₖ = σ.^2./sum(σ.^2) 
+    Vₖ = (σ.^2)./sum(σ.^2) 
     Λ = sqrt(n).*ev.vectors[:, n:-1:1]
     F = X*Λ/n
     (F, Λ, λ, σ, Vₖ, X, n, μ, σ)
@@ -282,6 +282,8 @@ struct WaldTestFun{F, T, Z}
     Vhat::Z
 end
 
+(wf::WaldTestFun)(theta) = wf.f(theta, wf.r, wf.vecsigma, wf.Vhat)
+
 function waldobjfun(th, r, vecsigma, Vhat)
     ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
     theta = reshape(th, r+1, length(th)÷(r+1))
@@ -317,8 +319,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
 
     ## Initial values
     for k in minrank:maxrank
-        wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)
-        (wf::WaldTestFun)(theta) = wf.f(theta, wf.r, wf.vecsigma, wf.Vhat)
+        wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)        
         df = (n-k)*(n-k+1)/2 - n 
 
         theta0 = theta_initial_value(n,k)
