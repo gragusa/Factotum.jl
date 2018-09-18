@@ -338,7 +338,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         dfa = DataFrame(rank = k, waldstat = out[1], df = df, critval = Distributions.quantile(chisq, .95), pvalue = 1-Distributions.cdf(chisq, out[1]))
         append!(out_table, dfa)
     end
-    filter!(raw->raw[:rank]>0, out_table)
+    filter!(raw->raw[:rank]>=0, out_table)
     WaldTest(out_table, minrank, maxrank)
 end
 
