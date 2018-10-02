@@ -338,7 +338,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         dfa = DataFrame(rank = k, waldstat = out[1], df = df, critval = Distributions.quantile(chisq, .95), pvalue = 1-Distributions.cdf(chisq, out[1]))
         append!(out_table, dfa)
     end
-    filter!(raw->raw[:rank]>0, out_table)
+    filter!(raw->raw[:rank]>=0, out_table)
     WaldTest(out_table, minrank, maxrank)
 end
 
@@ -372,10 +372,3 @@ export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
 
 
 end # module
-
-
-
-
-mintheta = [0.3208    0.1820    0.2128    0.2777    0.1741    0.0915    0.0787    0.0776 -0.4514   -0.5289   -0.3863   -0.2335   -0.0371   -0.2107   -0.2413   -0.2588 -0.0151   -0.1772   -0.2952   -0.4432   -0.5602   -0.6001   -0.6362   -0.6466]
-
-montheta = reshape(mintheta, 8, 3)'
