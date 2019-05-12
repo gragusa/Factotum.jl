@@ -5,6 +5,7 @@ using Distributions
 using StatsBase
 using Optim
 using DataFrames
+using Printf
 import StatsBase: residuals, fit
 
 function staticfactor(Z; demean::Bool = true, scale::Bool = false)
