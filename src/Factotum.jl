@@ -290,7 +290,7 @@ end
 function waldobjfun(th, r, vecsigma, Vhat)
     ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
     theta = reshape(th, r+1, length(th)÷(r+1))
-    sigmamat = diagm(theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
+    sigmamat = diagm(0=>theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
     tempsigma = sigmamat[findall(tril(ones(size(sigmamat))))]
     (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma)
 end
@@ -301,7 +301,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     ## Normalize factor
     Xs = X / diagm(sqrt.(diag(cov(X))))
     covX = cov(Xs)
-    meanX = mean(Xs, 1)
+    meanX = mean(Xs, dims=1)
     vecsigma = Factotum.vech(covX)
     bigN = length(vecsigma)
     Vhat = Array{Float64}(bigN, bigN)
