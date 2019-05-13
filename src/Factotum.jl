@@ -21,7 +21,7 @@ function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     σ = scale ? std(Z, dims=1) : ones(1,n)
     X = (Z .- μ)./σ
     ev = eigen(X'*X)
-    neg = find(x -> x < 0, ev.values)
+    neg = findall(x -> x < 0, ev.values)
     if !isempty(neg)
         if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
             error("covariance matrix is not non-negative definite")
@@ -291,7 +291,7 @@ function waldobjfun(th, r, vecsigma, Vhat)
     ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
     theta = reshape(th, r+1, length(th)÷(r+1))
     sigmamat = diagm(theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
-    tempsigma = sigmamat[find(tril(ones(size(sigmamat))))]
+    tempsigma = sigmamat[findall(tril(ones(size(sigmamat))))]
     (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma)
 end
 
@@ -311,7 +311,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] - meanX[i1]).*(Xs[:,i2] - meanX[i2]).*(Xs[:,i3] - meanX[i3]) .*(Xs[:,i4] - meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T
     end
 
-    index1, index2 = ind2sub(size(covX),find(tril(ones(size(covX)))))
+    index1, index2 = ind2sub(size(covX),findall(tril(ones(size(covX)))))
 
     for i=1:bigN, j=1:bigN   ## map elements of varvecsig array into matrix corresponding to
           Vhat[i,j] = varvecsig[index1[i],index2[i],index1[j],index2[j]]
