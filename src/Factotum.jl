@@ -7,6 +7,7 @@ using Optim
 using DataFrames
 using Printf
 using Statistics
+using LinearAlgebra
 import StatsBase: residuals, fit
 
 function staticfactor(Z; demean::Bool = true, scale::Bool = false)
@@ -19,7 +20,7 @@ function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     μ = demean ? mean(Z, dims=1) : zeros(1,n)
     σ = scale ? std(Z, dims=1) : ones(1,n)
     X = (Z .- μ)./σ
-    ev = eigfact(X'*X)
+    ev = eigen(X'*X)
     neg = find(x -> x < 0, ev.values)
     if !isempty(neg)
         if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
