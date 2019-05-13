@@ -184,7 +184,7 @@ function subview(fm::FactorModel, k)
 end
 
 function Base.show(io::IO, fm::FactorModel)
-    print_with_color(:green, io, "\nStatic Factor Model\n")
+    printstyled(io, "\nStatic Factor Model\n", color = :green)
     #@printf io "------------------------------------------------------\n"
     @printf io "Dimensions of X..........: %s\n" size(fm.X)
     @printf io "Number of factors........: %s\n" fm.k
@@ -206,7 +206,7 @@ describe(fm::FactorModel) = describe(STDOUT::IO, fm)
 
 function describe(io::IO, fm::FactorModel)
     show(io, fm)
-    print_with_color(:green, io, "Factors' importance:\n")
+    printstyled(io, "Factors' importance:\n", color = :green)
     factortable(io, fm)
 end
 
