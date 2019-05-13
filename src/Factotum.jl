@@ -202,7 +202,7 @@ function factortable(io::IO, fm::FactorModel)
     show(io, ct)
 end
 
-describe(fm::FactorModel) = describe(STDOUT::IO, fm)
+describe(fm::FactorModel) = describe(stdout, fm)
 
 function describe(io::IO, fm::FactorModel)
     show(io, fm)
