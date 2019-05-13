@@ -299,7 +299,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     X = copy(fm.X)
     T, n = size(X)
     ## Normalize factor
-    Xs = X / diagm(sqrt.(diag(cov(X))))
+    Xs = X / diagm(0=>sqrt.(diag(cov(X))))
     covX = cov(Xs)
     meanX = mean(Xs, dims=1)
     vecsigma = Factotum.vech(covX)
