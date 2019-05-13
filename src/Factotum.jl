@@ -290,10 +290,13 @@ end
 function waldobjfun(th, r, vecsigma, Vhat)
     ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
     theta = reshape(th, r+1, length(th)÷(r+1))
-    sigmamat = diagm(0=>theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
-    tempsigma = sigmamat[findall(tril(ones(size(sigmamat))))]
+    sigmamat = diagm(0=>theta[1,:].^2) .+ theta[2:r+1,:]'*theta[2:r+1,:]
+    tempsigma = sigmamat[findall(tril(ones(size(sigmamat))).==1)]
     (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma)
 end
+
+X = randn(100,10);
+fm = Factotum.FactorModel(X)
 
 function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     X = copy(fm.X)
@@ -304,19 +307,17 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     meanX = mean(Xs, dims=1)
     vecsigma = Factotum.vech(covX)
     bigN = length(vecsigma)
-    Vhat = Array{Float64}(bigN, bigN)
+    Vhat = Array{Float64}(undef, bigN, bigN)
     varvecsig = zeros(n,n,n,n);
 
     for i1 in 1:n, i2 = 1:n, i3 = 1:n, i4 = 1:n
-        varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] - meanX[i1]).*(Xs[:,i2] - meanX[i2]).*(Xs[:,i3] - meanX[i3]) .*(Xs[:,i4] - meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T
+        varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] .- meanX[i1]).*(Xs[:,i2] .- meanX[i2]).*(Xs[:,i3] .- meanX[i3]) .*(Xs[:,i4] .- meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T
     end
 
-    index1, index2 = ind2sub(size(covX),findall(tril(ones(size(covX)))))
-
+    idx = findall(tril(ones(size(covX))).==1)
     for i=1:bigN, j=1:bigN   ## map elements of varvecsig array into matrix corresponding to
-          Vhat[i,j] = varvecsig[index1[i],index2[i],index1[j],index2[j]]
+        Vhat[i,j] = varvecsig[idx[i],idx[j]]
     end
-
 
     out_table = DataFrame(rank = -1, waldstat = NaN, df = NaN, critval = NaN, pvalue = NaN)
 
@@ -335,7 +336,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         end
 
         convouts = outs[map(x->x[3], outs)]
-        out      = convouts[indmin(map(x->x[1], convouts))]
+        out      = convouts[argmin(map(x->x[1], convouts))]
 
         chisq = Chisq(df)
         dfa = DataFrame(rank = k, waldstat = out[1], df = df, critval = Distributions.quantile(chisq, .95), pvalue = 1-Distributions.cdf(chisq, out[1]))
@@ -347,8 +348,8 @@ end
 
 function theta_initial_value(n,k)
     I3 = ones(1,n)/3
-    ek = eye(k,n)
-    t0 = ([I3; zeros(k,n)], [I3; ones(k,n)/(2*k)],[I3; ek/(2*k)], [I3; flipdim(ek/(2*k),2)])::NTuple{4,Array{Float64,2}}
+    ek = [diagm(0=>ones(k)) zeros(k, n-k)]
+    t0 = ([I3; zeros(k,n)], [I3; ones(k,n)./(2*k)],[I3; ek./(2*k)], [I3; reverse(ek./(2*k), dims=2)])::NTuple{4,Array{Float64,2}}
     map(vec, t0)::NTuple{4,Array{Float64,1}}
 end
 
