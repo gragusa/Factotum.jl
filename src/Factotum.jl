@@ -357,7 +357,7 @@ end
 function vech(X::Matrix{S}) where S
     T, n = size(X)
     r = round(Int64, n*(n+1)/2)
-    x = Array{S, 1}(r)
+    x = Array{S, 1}(undef, r)
     i = 1
     for j in 1:n, k in j:n
         x[i] = X[j,k]
