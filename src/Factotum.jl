@@ -1,11 +1,12 @@
 module Factotum
 
 using IterTools
-using Distributions 
+using Distributions
 using StatsBase
 using Optim
 using DataFrames
 using Printf
+using Statistics
 import StatsBase: residuals, fit
 
 function staticfactor(Z; demean::Bool = true, scale::Bool = false)
@@ -15,22 +16,22 @@ function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     ## Λ'Λ = V, V (rxr) diagonal
     ## F'F = I
     T, n = size(Z)
-    μ = demean ? mean(Z, 1) : zeros(1,n)
-    σ = scale ? std(Z, 1) : ones(1,n)
+    μ = demean ? mean(Z, dims=1) : zeros(1,n)
+    σ = scale ? std(Z, dims=1) : ones(1,n)
     X = (Z .- μ)./σ
     ev = eigfact(X'*X)
     neg = find(x -> x < 0, ev.values)
     if !isempty(neg)
         if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
             error("covariance matrix is not non-negative definite")
-        else 
+        else
             ev.values[neg] = 0.0
         end
     end
     ## Stored in reverse order
     λ  = ev.values[n:-1:1]
     σ  = sqrt.(λ/T)
-    Vₖ = (σ.^2)./sum(σ.^2) 
+    Vₖ = (σ.^2)./sum(σ.^2)
     Λ = sqrt(n).*ev.vectors[:, n:-1:1]
     F = X*Λ/n
     (F, Λ, λ, σ, Vₖ, X, n, μ, σ)
@@ -38,16 +39,16 @@ end
 
 struct FactorModel
     factors::Array{Float64, 2}
-    loadings::Array{Float64, 2}    
+    loadings::Array{Float64, 2}
     eigenvalues::Array{Float64, 1}
     sdev::Array{Float64, 1}
     explained_variance::Array{Float64, 1}
     residuals::Matrix{Float64}
-    residual_variance::Float64        
+    residual_variance::Float64
     center::Array{Float64, 2}
     scale::Array{Float64, 1}
     k::Int64
-    X::Matrix{Float64}    
+    X::Matrix{Float64}
     r::Matrix{Float64}
 end
 
@@ -76,7 +77,7 @@ struct BIC3 <: SelectionCriteria end
 #     F = view(fm.factors, :, 1:k)
 #     ## X = fm.X
 #     ## Λ = F\X
-#     Λ = view(fm.loadings, :, 1:k)    
+#     Λ = view(fm.loadings, :, 1:k)
 #     (fm.X .- F*Λ')
 # end
 
@@ -85,34 +86,34 @@ struct BIC3 <: SelectionCriteria end
 #     F = view(fm.factors, :, 1:k)
 #     ## X = fm.X
 #     ## Λ = F\X
-#     Λ = view(fm.loadings, :, 1:k)    
+#     Λ = view(fm.loadings, :, 1:k)
 #     fm.r .= (fm.X .- F*Λ')
 #     sum(fm.r.^2)/(T*N)
 # end
 
 function FactorModel(Z::Matrix{Float64}; kwargs...)
-    (factors, 
-     loadings, 
-     eigenvalues, 
-     sdev, 
-     explained_variance, 
-     X, 
+    (factors,
+     loadings,
+     eigenvalues,
+     sdev,
+     explained_variance,
+     X,
      k,
-     center, 
+     center,
      scale) = staticfactor(Z; kwargs...)
 
     T, n = size(X)
     residuals = (X .- factors*loadings').^2
-    residual_variance = sum(residuals)/(T*n)    
-    FactorModel(factors, 
-                loadings, 
-                eigenvalues, 
-                sdev, 
-                explained_variance, 
+    residual_variance = sum(residuals)/(T*n)
+    FactorModel(factors,
+                loadings,
+                eigenvalues,
+                sdev,
+                explained_variance,
                 residuals,
-                residual_variance,                
+                residual_variance,
                 center,
-                scale, 
+                scale,
                 size(factors, 2),
                 copy(X),
                 similar(X))
@@ -120,17 +121,17 @@ end
 
 numfactor(fm::FactorModel) = fm.k
 
-function factors(fm::FactorModel, k)  
+function factors(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
     fm.factors[:, 1:k]
 end
 
-function loadings(fm::FactorModel, k)  
+function loadings(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
     fm.loadings[:, 1:k]
 end
 
-function eigenvalues(fm::FactorModel, k)  
+function eigenvalues(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
     fm.eigenvalues[1:k]
 end
@@ -171,11 +172,11 @@ function subview(fm::FactorModel, k)
                 lod, ## loadings
                 eig, ## eigenvalues
                 sdv, ## sdev
-                exv, ## explained_variance 
+                exv, ## explained_variance
                 res, ## residuals
-                rsv, ## residual_variance           
+                rsv, ## residual_variance
                 fm.center,
-                fm.scale, 
+                fm.scale,
                 k,
                 fm.X,
                 fm.r)
@@ -257,7 +258,7 @@ function penalty(s::Type{P}, T, N, k) where P <: Union{ICp2, PCp2}
 end
 
 function penalty(s::Type{P}, T, N, k) where P <: Union{ICp3, PCp3}
-    C2  = min(T, N)    
+    C2  = min(T, N)
     log(C2)/C2
 end
 
@@ -290,13 +291,13 @@ function waldobjfun(th, r, vecsigma, Vhat)
     theta = reshape(th, r+1, length(th)÷(r+1))
     sigmamat = diagm(theta[1,:].^2) + theta[2:r+1,:]'*theta[2:r+1,:]
     tempsigma = sigmamat[find(tril(ones(size(sigmamat))))]
-    (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma) 
+    (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma)
 end
 
 function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     X = copy(fm.X)
     T, n = size(X)
-    ## Normalize factor    
+    ## Normalize factor
     Xs = X / diagm(sqrt.(diag(cov(X))))
     covX = cov(Xs)
     meanX = mean(Xs, 1)
@@ -305,9 +306,9 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
     Vhat = Array{Float64}(bigN, bigN)
     varvecsig = zeros(n,n,n,n);
 
-    for i1 in 1:n, i2 = 1:n, i3 = 1:n, i4 = 1:n 
-        varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] - meanX[i1]).*(Xs[:,i2] - meanX[i2]).*(Xs[:,i3] - meanX[i3]) .*(Xs[:,i4] - meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T 
-    end 
+    for i1 in 1:n, i2 = 1:n, i3 = 1:n, i4 = 1:n
+        varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] - meanX[i1]).*(Xs[:,i2] - meanX[i2]).*(Xs[:,i3] - meanX[i3]) .*(Xs[:,i4] - meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T
+    end
 
     index1, index2 = ind2sub(size(covX),find(tril(ones(size(covX)))))
 
@@ -320,11 +321,11 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
 
     ## Initial values
     for k in minrank:maxrank
-        wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)        
-        df = (n-k)*(n-k+1)/2 - n 
+        wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)
+        df = (n-k)*(n-k+1)/2 - n
 
         theta0 = theta_initial_value(n,k)
-        
+
         outs = Array{Tuple{Float64,Array{Float64,1},Bool},1}()
 
         for j in theta0
@@ -356,17 +357,17 @@ function vech(X::Matrix{S}) where S
     T, n = size(X)
     r = round(Int64, n*(n+1)/2)
     x = Array{S, 1}(r)
-    i = 1    
+    i = 1
     for j in 1:n, k in j:n
         x[i] = X[j,k]
         i += 1
     end
     x
 end
- 
+
 
 export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
-       ICp1, ICp2, ICp3, PCp1, PCp2, PCp3, 
+       ICp1, ICp2, ICp3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3
 
 
