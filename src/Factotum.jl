@@ -1,14 +1,12 @@
 module Factotum
 
 using IterTools
-using Distributions
-using StatsBase
+using LinearAlgebra
 using Optim
-using DataFrames
 using Printf
 using Statistics
-using LinearAlgebra
-import StatsBase: residuals, fit
+using StatsBase
+using StatsFuns
 
 function staticfactor(Z; demean::Bool = true, scale::Bool = false)
     ## Estimate
@@ -273,7 +271,7 @@ penalty(s::Type{BIC3}, T, N, k) = 2*((N+T-k)*log(N*T))/(N*T)
 
 
 struct WaldTest
-    tbl::DataFrame
+    tbl::NamedTuple
     rankmin::Int64
     rankmax::Int64
 end
@@ -319,7 +317,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         Vhat[i,j] = varvecsig[idx[i],idx[j]]
     end
 
-    out_table = DataFrame(rank = -1, waldstat = NaN, df = NaN, critval = NaN, pvalue = NaN)
+    out_table = (rank = -1, waldstat = NaN, df = NaN, pvalue = NaN)
 
     ## Initial values
     for k in minrank:maxrank
@@ -338,8 +336,7 @@ function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
         convouts = outs[map(x->x[3], outs)]
         out      = convouts[argmin(map(x->x[1], convouts))]
 
-        chisq = Chisq(df)
-        dfa = DataFrame(rank = k, waldstat = out[1], df = df, critval = Distributions.quantile(chisq, .95), pvalue = 1-Distributions.cdf(chisq, out[1]))
+        dfa = (rank = k, waldstat = out[1], df = df,  pvalue = 1-StatsFuns.chisqcdf(df, out[1]))
         append!(out_table, dfa)
     end
     filter!(raw->raw[:rank]>=0, out_table)
@@ -353,8 +350,6 @@ function theta_initial_value(n,k)
     map(vec, t0)::NTuple{4,Array{Float64,1}}
 end
 
-
-
 function vech(X::Matrix{S}) where S
     T, n = size(X)
     r = round(Int64, n*(n+1)/2)
@@ -367,12 +362,8 @@ function vech(X::Matrix{S}) where S
     x
 end
 
-
 export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
        ICp1, ICp2, ICp3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3
 
-
-
-
-end # module
+end # module"
