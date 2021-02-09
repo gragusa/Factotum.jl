@@ -267,7 +267,7 @@ penalty(s::Type{AIC3}, T, N, k) = 2*(N+T-k)/(N*T)
 
 penalty(s::Type{BIC1}, T, N, k) = log(T)/T
 penalty(s::Type{BIC2}, T, N, k) = log(N)/N
-penalty(s::Type{BIC3}, T, N, k) = 2*((N+T-k)*log(N*T))/(N*T)
+penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
 
 struct WaldTest
