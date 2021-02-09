@@ -1,10 +1,17 @@
-using Factotum, Base.Test, RCall
+using Factotum, Random
+
+Random.seed!(101020)
+
+
 
 x = rand(100,10)                  # generate data
 f_julia = Factotum.FactorModel(x) # fit factor model
 
+
+
+
 ####### Call R, start ################################################
-R"  
+R"
 x <- $x
 f <- princomp(x)
 var <- summary(f)"
