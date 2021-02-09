@@ -70,26 +70,6 @@ struct BIC1 <: SelectionCriteria end
 struct BIC2 <: SelectionCriteria end
 struct BIC3 <: SelectionCriteria end
 
-
-# function calculate_residual(fm::FactorModel, k)
-#     T, N = size(fm.X)
-#     F = view(fm.factors, :, 1:k)
-#     ## X = fm.X
-#     ## Λ = F\X
-#     Λ = view(fm.loadings, :, 1:k)
-#     (fm.X .- F*Λ')
-# end
-
-# function calculate_residual_variance(fm::FactorModel, k)
-#     T, N = size(fm.X)
-#     F = view(fm.factors, :, 1:k)
-#     ## X = fm.X
-#     ## Λ = F\X
-#     Λ = view(fm.loadings, :, 1:k)
-#     fm.r .= (fm.X .- F*Λ')
-#     sum(fm.r.^2)/(T*N)
-# end
-
 function FactorModel(Z::Matrix{Float64}; kwargs...)
     (factors,
      loadings,
@@ -102,8 +82,8 @@ function FactorModel(Z::Matrix{Float64}; kwargs...)
      scale) = staticfactor(Z; kwargs...)
 
     T, n = size(X)
-    residuals = (X .- factors*loadings').^2
-    residual_variance = sum(residuals)/(T*n)
+    residuals = (X .- factors*loadings')
+    residual_variance = sum(residuals.^2)/(T*n)
     FactorModel(factors,
                 loadings,
                 eigenvalues,
@@ -125,6 +105,14 @@ function factors(fm::FactorModel, k)
     fm.factors[:, 1:k]
 end
 
+function rescaledfactors(fm::FactorModel, k)
+    @assert k <= numfactor(fm) "k too large"
+    F = fm.factors[:, 1:k]
+    T = size(F, 1)
+    U = cholesky(F'F/T).U
+    F*U
+end
+
 function loadings(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
     fm.loadings[:, 1:k]
@@ -142,12 +130,36 @@ end
 
 function StatsBase.residuals(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
-    fm.residuals[:, 1:k]
+    #fm.residuals[:, 1:k]
+    F = factors(fm, k)
+    Λ = loadings(fm, k)
+    fm.X .- F*Λ'
 end
+
+function StatsBase.residuals(fm::FactorModel)
+    F = factors(fm)
+    Λ = loadings(fm)
+    fm.X .- F*Λ'
+end
+
+
+function rescaledresiduals(fm::FactorModel, k)
+    @assert k <= numfactor(fm) "k too large"
+    #fm.residuals[:, 1:k]
+    F = rescaledfactors(fm, k)
+    Λ = loadings(fm, k)
+    fm.X .- F*Λ'
+end
+
 
 function residual_variance(fm::FactorModel, k)
     @assert k <= numfactor(fm) "k too large"
-    mean((fm.X - factors(fm, k)*loadings(fm, k)').^2)
+    mean(residuals(fm).^2)
+end
+
+function rescaledresidual_variance(fm::FactorModel, k)
+    @assert k <= numfactor(fm) "k too large"
+    mean(rescaledresiduals(fm).^2)
 end
 
 
@@ -187,7 +199,6 @@ function Base.show(io::IO, fm::FactorModel)
     @printf io "Dimensions of X..........: %s\n" size(fm.X)
     @printf io "Number of factors........: %s\n" fm.k
     @printf io "Factors calculated by....: %s\n" "Principal Component"
-    @printf io "Residual variance........: %s\n" residual_variance(fm)
     #@printf io "\n"
     #@printf io "------------------------------------------------------\n"
 end
@@ -217,16 +228,23 @@ end
 variance_factor(::Type{M}, fm, kmax) where M <: Union{ICp1, ICp2, ICp3} = 1.0
 variance_factor(::Type{M}, fm, kmax) where M <: SelectionCriteria = residual_variance(fm, kmax)
 
+variance_rescaledfactor(::Type{M}, fm, kmax) where M <: SelectionCriteria = V(fm, kmax)
+variance_rescaledfactor(::Type{M}, fm, kmax) where M <: Union{ICp1, ICp2, ICp3} = 1.0
+
 transform_V(::Type{M}, V) where M <: Union{ICp1, ICp2, ICp3} = log.(V)
 transform_V(::Type{M}, V) where M <: SelectionCriteria = V
+
+function V(fm::FactorModel, k)
+    mean(rescaledresiduals(fm, k).^2)
+end
 
 function Criteria(s::Type{M}, fm::FactorModel, kmax::Int64) where M <: SelectionCriteria
     T, n = size(fm.X)
     rnge = 0:kmax
-    σ̂² = variance_factor(M, fm, kmax)
-    models = map(k -> subview(fm, k), rnge)
-    Vₖ = map(x -> residual_variance(x), models)
-    Vₖ = transform_V(M, Vₖ)
+    #σ̂² = Factotum.variance_rescaledfactor(M, fm, kmax)
+    σ̂² = variance_rescaledfactor(s, fm, kmax)
+    Vₖ = map(k->V(fm, k), rnge)
+    Vₖ = transform_V.(M, Vₖ)
     gₜₙ= map(k -> penalty(s, T, n, k), rnge)
     Criteria(M(), Vₖ + σ̂².*(rnge).*gₜₙ, rnge)
 end
