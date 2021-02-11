@@ -196,8 +196,8 @@ function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) wh
     rnge = 1:kₘₐₓ
     σ̂² = Factotum.variance_factor(s, fm, kₘₐₓ)
     Vₖ  = Factotum.transform_V.(s, Factotum.V(fm, kₘₐₓ))
-    gₜₙ= map(k -> penalty(s, T, n, k), rnge)
-    InformationCriterion(M(), Vₖ + σ̂².*(rnge).*gₜₙ, rnge)
+    gₜₙ= map(k -> penalty(s, T, n), rnge)
+    InformationCriterion(M(), Vₖ + σ̂².*collect(rnge).*gₜₙ, rnge)
 end
 
 function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
@@ -242,7 +242,7 @@ function Base.show(io::IO, ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
     pretty_table(tbl, header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:length(ic)+1)), highlighters = (highlights...,))
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{IC1, PCp1}
+function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -250,7 +250,7 @@ function penalty(s::Type{P}, T, N, k) where P <: Union{IC1, PCp1}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{IC2, PCp2}
+function penalty(s::Type{P}, T, N) where P <: Union{IC2, PCp2}
     C2  = min(T, N)
     NtT = N*T
     NpT = N+T
@@ -259,18 +259,18 @@ function penalty(s::Type{P}, T, N, k) where P <: Union{IC2, PCp2}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{IC3, PCp3}
+function penalty(s::Type{P}, T, N) where P <: Union{IC3, PCp3}
     C2  = min(T, N)
     log(C2)/C2
 end
 
-penalty(s::Type{AIC1}, T, N, k) = 2/T
-penalty(s::Type{AIC2}, T, N, k) = 2/N
-penalty(s::Type{AIC3}, T, N, k) = 2*(N+T-k)/(N*T)
+penalty(s::Type{AIC1}, T, N) = 2/T
+penalty(s::Type{AIC2}, T, N) = 2/N
+penalty(s::Type{AIC3}, T, N) = 2*(N+T-k)/(N*T)
 
-penalty(s::Type{BIC1}, T, N, k) = log(T)/T
-penalty(s::Type{BIC2}, T, N, k) = log(N)/N
-penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
+penalty(s::Type{BIC1}, T, N) = log(T)/T
+penalty(s::Type{BIC2}, T, N) = log(N)/N
+penalty(s::Type{BIC3}, T, N) = ((N+T-k)*log(N*T))/(N*T)
 
 ############################################################
 ## Wald test
