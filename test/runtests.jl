@@ -1,14 +1,22 @@
-using Factotum, Random
-
+using Factotum, Random, Statistics, LinearAlgebra, Test
+T, n, r = (100, 10, 6)
 Random.seed!(101020)
+x = rand(T,n)                  # generate data
+fm = Factotum.FactorModel(x, 6; scale = true)      # fit factor model
 
+F = Factotum.factors(fm)
+Λ = Factotum.loadings(fm)
+σ = Factotum.sdev(fm)
+## Check diagonality cov(F)
 
+Σ = cov(F; corrected = false);
 
-x = rand(100,10)                  # generate data
-f_julia = Factotum.FactorModel(x) # fit factor model
+@test Σ ≈ diagm(0=>σ.^2)
+@test Λ'Λ/n ≈ diagm(0=>ones(r))
 
+## Test the proportion of the variance explained
 
-
+## Test
 
 ####### Call R, start ################################################
 R"
