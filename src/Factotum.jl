@@ -214,7 +214,7 @@ end)
 
 function Base.findmin(ic::InformationCriterion) 
     fmin = findmin(ic.crit)
-    NamedTuple{(:Symbol(string(ic.criterion)), :r)}(fmin)
+    NamedTuple{(Symbol(string(ic.criterion)), :r)}(fmin)
 end
 
 function Base.findmin(ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
