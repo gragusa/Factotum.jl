@@ -178,7 +178,7 @@ end
 ## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ 
 function V(fmv::FactorModelView)
     Λ = loadings(fmv)
-    F = factors(fmv)
+    F = rescaled_factors(fmv)
     mul!(fmv.residuals, F, Λ')
     fmv.residuals .= rescaledX(fmv) .- fmv.residuals    
     mean(fmv.residuals.^2)
