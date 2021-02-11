@@ -1,13 +1,12 @@
 module Factotum
 
-using IterTools
 using LinearAlgebra
 using Optim
+using PrettyTables
 using Printf
 using Statistics
 using StatsBase
 using StatsFuns
-using PrettyTables
 
 abstract type AbstractFactorModel end
 
@@ -156,24 +155,24 @@ end
 ## ------------------------------------------------------------
 ## Information Criteria
 ## ------------------------------------------------------------
-abstract type SelectionCriteria end
-struct ICp1 <: SelectionCriteria end
-struct ICp2 <: SelectionCriteria end
-struct ICp3 <: SelectionCriteria end
-struct PCp1 <: SelectionCriteria end
-struct PCp2 <: SelectionCriteria end
-struct PCp3 <: SelectionCriteria end
-struct AIC1 <: SelectionCriteria end
-struct AIC2 <: SelectionCriteria end
-struct AIC3 <: SelectionCriteria end
-struct BIC1 <: SelectionCriteria end
-struct BIC2 <: SelectionCriteria end
-struct BIC3 <: SelectionCriteria end
+abstract type AbstractInformationCriterion end
+struct IC1 <: AbstractInformationCriterion end
+struct IC2 <: AbstractInformationCriterion end
+struct IC3 <: AbstractInformationCriterion end
+struct PCp1 <: AbstractInformationCriterion end
+struct PCp2 <: AbstractInformationCriterion end
+struct PCp3 <: AbstractInformationCriterion end
+struct AIC1 <: AbstractInformationCriterion end
+struct AIC2 <: AbstractInformationCriterion end
+struct AIC3 <: AbstractInformationCriterion end
+struct BIC1 <: AbstractInformationCriterion end
+struct BIC2 <: AbstractInformationCriterion end
+struct BIC3 <: AbstractInformationCriterion end
 
-struct InformationCriterion{M <: SelectionCriteria}
+struct InformationCriterion{M <: AbstractInformationCriterion, T<:AbstractFloat}
     criterion::M
-    crit::Array{Float64,1}
-    kₘₐₓ::UnitRange{Int64} ## Change name of this field -> rnge
+    crit::Array{T,1}
+    rnge::UnitRange{Int64} ## Change name of this field -> rnge
 end
 
 ## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ 
@@ -187,12 +186,12 @@ end
 
 V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j ∈ 1:kₘₐₓ]    
 
-variance_factor(::Type{M}, fm, kₘₐₓ) where M <: Union{ICp1, ICp2, ICp3} = 1.0
-variance_factor(::Type{M}, fm, kₘₐₓ) where M <: SelectionCriteria = V(view(fm, kₘₐₓ))
-transform_V(::Type{M}, V) where M <: Union{ICp1, ICp2, ICp3} = log.(V)
-transform_V(::Type{M}, V) where M <: SelectionCriteria = V
+variance_factor(::Type{M}, fm, kₘₐₓ) where M <: Union{IC1, IC2, IC3} = 1.0
+variance_factor(::Type{M}, fm, kₘₐₓ) where M <: AbstractInformationCriterion = V(view(fm, kₘₐₓ))
+transform_V(::Type{M}, V) where M <: Union{IC1, IC2, IC3} = log.(V)
+transform_V(::Type{M}, V) where M <: AbstractInformationCriterion = V
 
-function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where M <: SelectionCriteria
+function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where M <: AbstractInformationCriterion
     T, n = size(fm)
     rnge = 1:kₘₐₓ
     σ̂² = Factotum.variance_factor(s, fm, kₘₐₓ)
@@ -201,21 +200,49 @@ function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) wh
     InformationCriterion(M(), Vₖ + σ̂².*(rnge).*gₜₙ, rnge)
 end
 
-(for criterion ∈ (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :ICp1, :ICp2, :ICp3, :PCp1, :PCp2, :PCp3)
+function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
+    @assert all(map(x->isa(x(), Factotum.AbstractInformationCriterion), criterion)) "Some of the arguments is not a SelectionCriterion"
+    map(x->x(fm, kₘₐₓ), criterion)
+end
+
+(for criterion ∈ (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
     eval(quote 
     ($criterion)(fm, kₘₐₓ::Int64) = Factotum.informationcriterion($criterion, fm, kₘₐₓ)
+    Base.string(ic::($criterion)) = string(($criterion))
     end)
 end)
+
+function Base.findmin(ic::InformationCriterion) 
+    fmin = findmin(ic.crit)
+    NamedTuple{(:Symbol(string(ic.criterion)), :r)}(fmin)
+end
+
+function Base.findmin(ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
+    fmin = map(x->findmin(x.crit), ic)
+    nm = map(x->(Symbol(x.criterion), :r), ic)
+    TT = map(x->eltype(x.crit), ic)
+    map((nm,x, T) -> NamedTuple{nm}(x), nm, fmin, TT)
+end
+
+numfactors(ic::InformationCriterion) = findmin(ic).r
+Base.string(ic::InformationCriterion{T, F}) where {T, F}  = string(T)
 
 function Base.show(io::IO, ic::T) where T <: InformationCriterion
     header = ["# of factor"  "Criterion"]
     highlight1 = Highlighter((data, i, j) -> data[i,2] == minimum(data[:,2]), Crayon(background = :light_blue, foreground = :white, bold = true))
     highlight2 = Highlighter((data, i, j) -> (j == 2), Crayon(foreground = :light_blue))
     highlight3 = Highlighter((data, i, j) -> (j == 1), Crayon(foreground = :light_red, bold = true))
-    pretty_table([ic.kₘₐₓ ic.crit], header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:2)), highlighters = (highlight1, highlight2, highlight3))
+    pretty_table([ic.rnge ic.crit], header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:2)), highlighters = (highlight1, highlight2, highlight3))
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{ICp1, PCp1}
+function Base.show(io::IO, ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
+    header = ["# of factor"  string.(ic)...]
+    highlights = map(x->Highlighter((data, i, j) -> data[i,j] == minimum(data[:,x]) && j > 1, Crayon(background = :light_blue, foreground = :white, bold = true)), 2:length(ic)+1)
+    tbl = [first(ic).rnge mapreduce(x->x.crit, hcat, ic)]
+    pretty_table(tbl, header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:length(ic)+1)), highlighters = (highlights...,))
+end
+
+function penalty(s::Type{P}, T, N, k) where P <: Union{IC1, PCp1}
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -223,7 +250,7 @@ function penalty(s::Type{P}, T, N, k) where P <: Union{ICp1, PCp1}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{ICp2, PCp2}
+function penalty(s::Type{P}, T, N, k) where P <: Union{IC2, PCp2}
     C2  = min(T, N)
     NtT = N*T
     NpT = N+T
@@ -232,7 +259,7 @@ function penalty(s::Type{P}, T, N, k) where P <: Union{ICp2, PCp2}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N, k) where P <: Union{ICp3, PCp3}
+function penalty(s::Type{P}, T, N, k) where P <: Union{IC3, PCp3}
     C2  = min(T, N)
     log(C2)/C2
 end
@@ -341,7 +368,7 @@ penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 # end
 
 export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
-       ICp1, ICp2, ICp3, PCp1, PCp2, PCp3,
+       IC1, IC2, IC3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3
 
 end # module"
