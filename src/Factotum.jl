@@ -24,6 +24,8 @@ struct FactorModel{M <: AbstractMatrix, V <: AbstractVector} <: AbstractFactorMo
     scale::M
     "The original matrix"
     X::M
+    "The rescaled matrix"
+    X̄::M
 end
 
 struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVector, R} <: AbstractFactorModel
@@ -36,13 +38,13 @@ struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVe
     "Residual " # Why here? Maybe to use to view and update in place...
     residuals::R
     "The rescaled matrix"
-    X::R
+    X̄::R
 end
 
 function FactorModel(Z::AbstractMatrix{G}, numfactors; kwargs...) where G
     T, n = size(Z)
-    (F, Λ, λ, ε, μ, σₓ, X) = T > n ? extract_ΛΛ(Z, numfactors; kwargs...) : extract_FF(Z; kwargs...)    
-    FactorModel(F, Λ, λ, ε, μ, σₓ, X)
+    (F, Λ, λ, ε, μ, σₓ, Z, X) = T > n ? extract_ΛΛ(Z, numfactors; kwargs...) : extract_FF(Z; kwargs...)
+    FactorModel(F, Λ, λ, ε, μ, σₓ, Z, X)
 end
 
 function extract_ΛΛ(Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
@@ -65,10 +67,10 @@ function extract_ΛΛ(Z, numfactors; demean::Bool = true, scale::Bool = false, c
         end
     end
     λ  = ev.values[numfactors:-1:1] 
-    Λ = sqrt(n).*ev.vectors[:, numfactors:-1:1]
+    Λ = sqrt(n)*ev.vectors[:, numfactors:-1:1]
     F = X*Λ/n
     ε = (X .- F*Λ')
-    (F, Λ, λ, ε, μ, σₓ, Z)
+    (F, Λ, λ, ε, μ, σₓ, Z, X)
 end
 
 
@@ -83,14 +85,14 @@ function Base.view(fm::FactorModel, rnge::UnitRange)
     @assert first(rnge) <= maximum(rnge) 
     ## To do: check that max(range) < numfactors fm
     FactorModelView(view(factors(fm), :, rnge), view(loadings(fm), :, rnge),
-        view(eigvals(fm), rnge), similar(residuals(fm), T, n), rescaledX(fm))
+        view(eigvals(fm), rnge), residuals(fm), fm.X̄)
 end
 
 
 ## ------------------------------------------------------------
 ## Methods
 ## ------------------------------------------------------------
-Base.size(fm::AbstractFactorModel) = size(fm.X)
+Base.size(fm::AbstractFactorModel) = size(fm.X̄)
 numfactors(fm::AbstractFactorModel) = size(loadings(fm), 2)
 loadings(fm::AbstractFactorModel) = fm.loadings
 factors(fm::AbstractFactorModel) = fm.factors
@@ -108,21 +110,15 @@ function explained_variance(fm::FactorModel)
     λ./sum(λ)
 end
 
-function rescaled_factors(fm::AbstractFactorModel)
-    F = factors(fm)
-    σ = sdev(fm)
-    F*diagm(0=>σ)
-end
-
 function StatsBase.residuals(fm::AbstractFactorModel)
     F = factors(fm)
     Λ = loadings(fm)
-    rescaledX(fm) .- F*Λ'
+    fm.residuals .= fm.X̄ .- F*Λ'
+    return fm.residuals
 end
 
-plainX(fm::AbstractFactorModel) = fm.X
-rescaledX(fm::FactorModel) = (plainX(fm) .- fm.center)./fm.scale
-rescaledX(fm::FactorModelView) = plainX(fm)
+X(fm::FactorModel) = fm.X
+X̄(fm::AbstractFactorModel) = fm.X̄
 
 ## Output
 function Base.show(io::IO, fm::AbstractFactorModel)
@@ -177,27 +173,26 @@ end
 
 ## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ 
 function V(fmv::FactorModelView)
-    Λ = loadings(fmv)
-    F = rescaled_factors(fmv)
-    mul!(fmv.residuals, F, Λ')
-    fmv.residuals .= rescaledX(fmv) .- fmv.residuals    
-    mean(fmv.residuals.^2)
+    ε = residuals(fmv)
+    Λ = Factotum.loadings(fmv)
+    F = Factotum.factors(fmv)
+    mean(ε.^2)
 end
 
 V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j ∈ 1:kₘₐₓ]    
 
 variance_factor(::Type{M}, fm, kₘₐₓ) where M <: Union{IC1, IC2, IC3} = 1.0
-variance_factor(::Type{M}, fm, kₘₐₓ) where M <: AbstractInformationCriterion = V(view(fm, kₘₐₓ))
+variance_factor(::Type{M}, fm, kₘₐₓ) where M <: AbstractInformationCriterion = V(view(fm, kₘₐₓ)) ## This is probably transform
 transform_V(::Type{M}, V) where M <: Union{IC1, IC2, IC3} = log.(V)
 transform_V(::Type{M}, V) where M <: AbstractInformationCriterion = V
 
 function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where M <: AbstractInformationCriterion
     T, n = size(fm)
     rnge = 1:kₘₐₓ
-    σ̂² = Factotum.variance_factor(s, fm, kₘₐₓ)
-    Vₖ  = Factotum.transform_V.(s, Factotum.V(fm, kₘₐₓ))
-    gₜₙ= map(k -> penalty(s, T, n), rnge)
-    InformationCriterion(M(), Vₖ + σ̂².*collect(rnge).*gₜₙ, rnge)
+    σ̂²  = variance_factor(s, fm, kₘₐₓ)
+    Vₖ = transform_V.(s, V(fm, kₘₐₓ))
+    gₜₙ = map(k -> k*penalty(s, T, n, k), rnge)
+    InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, rnge)
 end
 
 function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
@@ -209,6 +204,7 @@ end
     eval(quote 
     ($criterion)(fm, kₘₐₓ::Int64) = Factotum.informationcriterion($criterion, fm, kₘₐₓ)
     Base.string(ic::($criterion)) = string(($criterion))
+    ($criterion)(X::Matrix, kₘₐₓ::Int64; kwargs...) = Factotum.informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
     end)
 end)
 
@@ -264,13 +260,15 @@ function penalty(s::Type{P}, T, N) where P <: Union{IC3, PCp3}
     log(C2)/C2
 end
 
+penalty(s::Type{S}, T, N, k) where S = penalty(s, T, N)
+
 penalty(s::Type{AIC1}, T, N) = 2/T
 penalty(s::Type{AIC2}, T, N) = 2/N
-penalty(s::Type{AIC3}, T, N) = 2*(N+T-k)/(N*T)
+penalty(s::Type{AIC3}, T, N, k) = 2*(N+T-k)/(N*T)
 
 penalty(s::Type{BIC1}, T, N) = log(T)/T
 penalty(s::Type{BIC2}, T, N) = log(N)/N
-penalty(s::Type{BIC3}, T, N) = ((N+T-k)*log(N*T))/(N*T)
+penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
 ############################################################
 ## Wald test
