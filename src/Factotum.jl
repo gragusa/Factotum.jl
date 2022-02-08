@@ -1,7 +1,7 @@
 module Factotum
 
 using LinearAlgebra
-using Optim
+#using Optim
 using PrettyTables
 using Printf
 using Statistics
@@ -23,7 +23,7 @@ struct FactorModel{M <: AbstractMatrix, V <: AbstractVector} <: AbstractFactorMo
     center::M
     scale::M
     "The original matrix"
-    X::M
+    X
     "The rescaled matrix"
     X̄::M
 end
@@ -41,8 +41,11 @@ struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVe
     X̄::R
 end
 
+FactorModel(Z::AbstractMatrix{G}; kwargs...) where G = FactorModel(Z, size(Z,2); kwargs...)
+
 function FactorModel(Z::AbstractMatrix{G}, numfactors; kwargs...) where G
     T, n = size(Z)
+    @assert n >= numfactors "`numfactors` must be less than the columns of `Z`"
     (F, Λ, λ, ε, μ, σₓ, Z, X) = T > n ? extract_ΛΛ(Z, numfactors; kwargs...) : extract_FF(Z; kwargs...)
     FactorModel(F, Λ, λ, ε, μ, σₓ, Z, X)
 end
@@ -82,12 +85,10 @@ end
 function Base.view(fm::FactorModel, rnge::UnitRange)
     T, n = size(fm)
     @assert numfactors(fm) >= maximum(rnge) "Cannot create a FactorModel's view with $(maximum(rnge)) when the parent has $(numfactors(fm)) factors"
-    @assert first(rnge) <= maximum(rnge) 
-    ## To do: check that max(range) < numfactors fm
+    @assert first(rnge) <= maximum(rnge)     
     FactorModelView(view(factors(fm), :, rnge), view(loadings(fm), :, rnge),
         view(eigvals(fm), rnge), residuals(fm), fm.X̄)
 end
-
 
 ## ------------------------------------------------------------
 ## Methods
@@ -174,8 +175,6 @@ end
 ## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ 
 function V(fmv::FactorModelView)
     ε = residuals(fmv)
-    Λ = Factotum.loadings(fmv)
-    F = Factotum.factors(fmv)
     mean(ε.^2)
 end
 
@@ -190,9 +189,10 @@ function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) wh
     T, n = size(fm)
     rnge = 1:kₘₐₓ
     σ̂²  = variance_factor(s, fm, kₘₐₓ)
-    Vₖ = transform_V.(s, V(fm, kₘₐₓ))
-    gₜₙ = map(k -> k*penalty(s, T, n, k), rnge)
-    InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, rnge)
+    VV = [mean(fm.X̄.^2); V(fm, kₘₐₓ)]    
+    Vₖ = transform_V.(s, VV)
+    gₜₙ = map(k -> k*penalty(s, T, n, k), 0:last(rnge))
+    InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, 0:last(rnge))
 end
 
 function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
@@ -228,14 +228,14 @@ function Base.show(io::IO, ic::T) where T <: InformationCriterion
     highlight1 = Highlighter((data, i, j) -> data[i,2] == minimum(data[:,2]), Crayon(background = :light_blue, foreground = :white, bold = true))
     highlight2 = Highlighter((data, i, j) -> (j == 2), Crayon(foreground = :light_blue))
     highlight3 = Highlighter((data, i, j) -> (j == 1), Crayon(foreground = :light_red, bold = true))
-    pretty_table([ic.rnge ic.crit], header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:2)), highlighters = (highlight1, highlight2, highlight3))
+    pretty_table([ic.rnge ic.crit], header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:2)), highlighters = (highlight1, highlight2, highlight3))
 end
 
 function Base.show(io::IO, ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
     header = ["# of factor"  string.(ic)...]
     highlights = map(x->Highlighter((data, i, j) -> data[i,j] == minimum(data[:,x]) && j > 1, Crayon(background = :light_blue, foreground = :white, bold = true)), 2:length(ic)+1)
     tbl = [first(ic).rnge mapreduce(x->x.crit, hcat, ic)]
-    pretty_table(tbl, header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3f", 2:length(ic)+1)), highlighters = (highlights...,))
+    pretty_table(tbl, header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:length(ic)+1)), highlighters = (highlights...,))
 end
 
 function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
