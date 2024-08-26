@@ -228,14 +228,14 @@ function Base.show(io::IO, ic::T) where T <: InformationCriterion
     highlight1 = Highlighter((data, i, j) -> data[i,2] == minimum(data[:,2]), Crayon(background = :light_blue, foreground = :white, bold = true))
     highlight2 = Highlighter((data, i, j) -> (j == 2), Crayon(foreground = :light_blue))
     highlight3 = Highlighter((data, i, j) -> (j == 1), Crayon(foreground = :light_red, bold = true))
-    pretty_table([ic.rnge ic.crit], header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:2)), highlighters = (highlight1, highlight2, highlight3))
+    pretty_table([ic.rnge ic.crit], header=vec(header), header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:2)), highlighters = (highlight1, highlight2, highlight3))
 end
 
 function Base.show(io::IO, ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
     header = ["# of factor"  string.(ic)...]
     highlights = map(x->Highlighter((data, i, j) -> data[i,j] == minimum(data[:,x]) && j > 1, Crayon(background = :light_blue, foreground = :white, bold = true)), 2:length(ic)+1)
     tbl = [first(ic).rnge mapreduce(x->x.crit, hcat, ic)]
-    pretty_table(tbl, header, header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:length(ic)+1)), highlighters = (highlights...,))
+    pretty_table(tbl, header=vec(header), header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:length(ic)+1)), highlighters = (highlights...,))
 end
 
 function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
