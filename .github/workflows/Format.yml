@@ -1,0 +1,42 @@
+name: Format
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  format:
+    name: Julia Formatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - name: Install JuliaFormatter
+        run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+      - name: Format code
+        run: |
+          julia -e '
+            using JuliaFormatter
+            format("src", SciMLStyle())
+            format("test", SciMLStyle())
+          '
+      - name: Check formatting
+        run: |
+          julia -e '
+            using JuliaFormatter
+            out = IOBuffer()
+            if !format("src", SciMLStyle(), overwrite=false)
+                println("src/ is not formatted correctly")
+                exit(1)
+            end
+            if !format("test", SciMLStyle(), overwrite=false)
+                println("test/ is not formatted correctly")
+                exit(1)
+            end
+            println("All files are formatted correctly!")
+          '
