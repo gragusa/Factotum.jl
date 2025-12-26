@@ -1,12 +1,10 @@
 module Factotum
 
 using LinearAlgebra
-#using Optim
 using PrettyTables
 using Printf
 using Statistics
 using StatsBase
-using StatsFuns
 
 abstract type AbstractFactorModel end
 
@@ -17,13 +15,13 @@ struct FactorModel{M <: AbstractMatrix, V <: AbstractVector} <: AbstractFactorMo
     loadings::M
     "The eigenvalues of X'X"
     eigenvalues::V
-    "Residual " # Why here? Maybe to use to view and update in place...
+    "Residuals from the factor model (X̄ - F*Λ')"
     residuals::M
     "To demean and scale the matrix X"
     center::M
     scale::M
     "The original matrix"
-    X
+    X::M
     "The rescaled matrix"
     X̄::M
 end
@@ -35,7 +33,7 @@ struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVe
     loadings::S
     "The eigenvalues of X'X"
     eigenvalues::V
-    "Residual " # Why here? Maybe to use to view and update in place...
+    "Residuals from the factor model (X̄ - F*Λ')"
     residuals::R
     "The rescaled matrix"
     X̄::R
@@ -45,8 +43,10 @@ FactorModel(Z::AbstractMatrix{G}; kwargs...) where G = FactorModel(Z, size(Z,2);
 
 function FactorModel(Z::AbstractMatrix{G}, numfactors; kwargs...) where G
     T, n = size(Z)
-    @assert n >= numfactors "`numfactors` must be less than the columns of `Z`"
-    (F, Λ, λ, ε, μ, σₓ, Z, X) = T > n ? extract_ΛΛ(Z, numfactors; kwargs...) : extract_FF(Z; kwargs...)
+    T == 0 && throw(ArgumentError("Input matrix must not be empty (got size $(size(Z)))"))
+    numfactors < 0 && throw(ArgumentError("numfactors must be non-negative (got $numfactors)"))
+    numfactors > n && throw(ArgumentError("numfactors ($numfactors) must not exceed number of columns ($n)"))
+    (F, Λ, λ, ε, μ, σₓ, Z, X) = T > n ? extract_ΛΛ(Z, numfactors; kwargs...) : extract_FF(Z, numfactors; kwargs...)
     FactorModel(F, Λ, λ, ε, μ, σₓ, Z, X)
 end
 
@@ -76,16 +76,46 @@ function extract_ΛΛ(Z, numfactors; demean::Bool = true, scale::Bool = false, c
     (F, Λ, λ, ε, μ, σₓ, Z, X)
 end
 
+function extract_FF(Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
+    ## Estimate when T <= n
+    ## X = FΛ' + e
+    ##
+    ## F'F/T = I (normalized factors)
+    ## Λ'Λ = V, V (rxr) diagonal
+    T, n = size(Z)
+    μ = demean ? mean(Z; dims = 1) : zeros(1, n)
+    σₓ = scale ? std(Z; dims = 1, corrected = corrected) : ones(1, n)
+    X = (Z .- μ) ./ σₓ
 
-function Base.view(fm::FactorModel, k::Int) 
-    @assert k > 0 "Cannot view a FactorModel with 0 factors"
-    view(fm, 1:k) 
+    # Eigendecompose X*X' (T x T matrix, smaller when T <= n)
+    ev = eigen(Symmetric(X * X'), T - numfactors + 1:T)
+    neg = findall(x -> x < 0, ev.values)
+    if !isempty(neg)
+        if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
+            error("covariance matrix is not non-negative definite")
+        else
+            ev.values[neg] .= 0.0
+        end
+    end
+
+    λ = ev.values[numfactors:-1:1]
+    F = sqrt(T) * ev.vectors[:, numfactors:-1:1]
+    Λ = X' * F / T
+    ε = X .- F * Λ'
+    (F, Λ, λ, ε, μ, σₓ, Z, X)
+end
+
+
+function Base.view(fm::FactorModel, k::Int)
+    k <= 0 && throw(ArgumentError("Cannot view a FactorModel with $k factors (must be positive)"))
+    view(fm, 1:k)
 end
 
 function Base.view(fm::FactorModel, rnge::UnitRange)
-    T, n = size(fm)
-    @assert numfactors(fm) >= maximum(rnge) "Cannot create a FactorModel's view with $(maximum(rnge)) when the parent has $(numfactors(fm)) factors"
-    @assert first(rnge) <= maximum(rnge)     
+    isempty(rnge) && throw(ArgumentError("Range must not be empty"))
+    first(rnge) <= 0 && throw(ArgumentError("Range must start at 1 or greater (got $(first(rnge)))"))
+    maximum(rnge) > numfactors(fm) && throw(ArgumentError(
+        "Cannot create FactorModel view with $(maximum(rnge)) factors when parent has $(numfactors(fm)) factors"))
     FactorModelView(view(factors(fm), :, rnge), view(loadings(fm), :, rnge),
         view(eigvals(fm), rnge), residuals(fm), fm.X̄)
 end
@@ -124,12 +154,9 @@ X̄(fm::AbstractFactorModel) = fm.X̄
 ## Output
 function Base.show(io::IO, fm::AbstractFactorModel)
     printstyled(io, "\nStatic Factor Model\n", color = :green)
-    #@printf io "------------------------------------------------------\n"
     @printf io "Dimensions of X..........: %s\n" size(fm)
     @printf io "Number of factors........: %s\n" numfactors(fm)
     @printf io "Factors calculated by....: %s\n" "Principal Component"
-    #@printf io "\n"
-    #@printf io "------------------------------------------------------\n"
 end
 
 describe(fm::FactorModel) = describe(stdout, fm)
@@ -141,10 +168,14 @@ function describe(io::IO, fm::FactorModel)
 end
 
 function factortable(io::IO, fm::FactorModel)
+    k = numfactors(fm)
     explainedvar = explained_variance(fm)
-    colnms = "Factor_".*string.(1:numfactors(fm))
+    colnms = "Factor_" .* string.(1:k)
     rownms = ["Standard deviation", "Proportion of Variance", "Cumulative Proportion"]
-    mat = vcat(sdev(fm)', explainedvar', cumsum(explainedvar)')
+    mat = Matrix{Float64}(undef, 3, k)
+    mat[1, :] .= sdev(fm)
+    mat[2, :] .= explainedvar
+    cumsum!(view(mat, 3, :), explainedvar)
     ct = CoefTable(mat, colnms, rownms)
     show(io, ct)
 end
@@ -169,13 +200,13 @@ struct BIC3 <: AbstractInformationCriterion end
 struct InformationCriterion{M <: AbstractInformationCriterion, T<:AbstractFloat}
     criterion::M
     crit::Array{T,1}
-    rnge::UnitRange{Int64} ## Change name of this field -> rnge
+    rnge::UnitRange{Int64}
 end
 
-## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ 
+## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ
 function V(fmv::FactorModelView)
     ε = residuals(fmv)
-    mean(ε.^2)
+    sum(abs2, ε) / length(ε)
 end
 
 V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j ∈ 1:kₘₐₓ]    
@@ -186,10 +217,12 @@ transform_V(::Type{M}, V) where M <: Union{IC1, IC2, IC3} = log.(V)
 transform_V(::Type{M}, V) where M <: AbstractInformationCriterion = V
 
 function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where M <: AbstractInformationCriterion
+    kₘₐₓ <= 0 && throw(ArgumentError("kₘₐₓ must be positive (got $kₘₐₓ)"))
+    kₘₐₓ > numfactors(fm) && throw(ArgumentError("kₘₐₓ ($kₘₐₓ) exceeds number of factors in model ($(numfactors(fm)))"))
     T, n = size(fm)
     rnge = 1:kₘₐₓ
     σ̂²  = variance_factor(s, fm, kₘₐₓ)
-    VV = [mean(fm.X̄.^2); V(fm, kₘₐₓ)]    
+    VV = [sum(abs2, fm.X̄) / length(fm.X̄); V(fm, kₘₐₓ)]
     Vₖ = transform_V.(s, VV)
     gₜₙ = map(k -> k*penalty(s, T, n, k), 0:last(rnge))
     InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, 0:last(rnge))
@@ -224,18 +257,31 @@ numfactors(ic::InformationCriterion) = findmin(ic).r
 Base.string(ic::InformationCriterion{T, F}) where {T, F}  = string(T)
 
 function Base.show(io::IO, ic::T) where T <: InformationCriterion
-    header = ["# of factor"  "Criterion"]
-    highlight1 = Highlighter((data, i, j) -> data[i,2] == minimum(data[:,2]), Crayon(background = :light_blue, foreground = :white, bold = true))
-    highlight2 = Highlighter((data, i, j) -> (j == 2), Crayon(foreground = :light_blue))
-    highlight3 = Highlighter((data, i, j) -> (j == 1), Crayon(foreground = :light_red, bold = true))
-    pretty_table([ic.rnge ic.crit], header=vec(header), header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:2)), highlighters = (highlight1, highlight2, highlight3))
+    column_labels = ["# of factors", "Criterion"]
+    highlight1 = TextHighlighter((data, i, j) -> data[i, 2] == minimum(data[:, 2]),
+                                  Crayon(background = :blue, foreground = :white, bold = true))
+    highlight2 = TextHighlighter((data, i, j) -> j == 2, Crayon(foreground = :light_blue))
+    highlight3 = TextHighlighter((data, i, j) -> j == 1, Crayon(foreground = :light_red, bold = true))
+    style = TextTableStyle(first_line_column_label = crayon"yellow bold")
+    pretty_table(io, [ic.rnge ic.crit];
+                 column_labels = [column_labels],
+                 style = style,
+                 formatters = [fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", [2])],
+                 highlighters = [highlight1, highlight2, highlight3])
 end
 
 function Base.show(io::IO, ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
-    header = ["# of factor"  string.(ic)...]
-    highlights = map(x->Highlighter((data, i, j) -> data[i,j] == minimum(data[:,x]) && j > 1, Crayon(background = :light_blue, foreground = :white, bold = true)), 2:length(ic)+1)
-    tbl = [first(ic).rnge mapreduce(x->x.crit, hcat, ic)]
-    pretty_table(tbl, header=vec(header), header_crayon = crayon"yellow bold", formatters = (ft_printf("%5.0f", 1), ft_printf("%5.3g", 2:length(ic)+1)), highlighters = (highlights...,))
+    column_labels = ["# of factors", string.(ic)...]
+    highlights = [TextHighlighter((data, i, j) -> data[i, j] == minimum(data[:, x]) && j > 1,
+                                   Crayon(background = :blue, foreground = :white, bold = true))
+                  for x in 2:length(ic)+1]
+    tbl = [first(ic).rnge mapreduce(x -> x.crit, hcat, ic)]
+    style = TextTableStyle(first_line_column_label = crayon"yellow bold")
+    pretty_table(io, tbl;
+                 column_labels = [column_labels],
+                 style = style,
+                 formatters = [fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", collect(2:length(ic)+1))],
+                 highlighters = highlights)
 end
 
 function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
@@ -365,7 +411,8 @@ penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 #     x
 # end
 
-export FactorModel, subview, waldtest, describe, PValue, waldstat, Criteria,
+export FactorModel, describe,
+       numfactors, factors, loadings, explained_variance,
        IC1, IC2, IC3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3
 
