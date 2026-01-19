@@ -5,8 +5,9 @@
     df = CSV.read(path, DataFrame)
     X_full = Matrix{Float64}(df[:, 2:end])
 
-    ftm = Factotum.FactorModel(X_full, 6; scale=true, method=:ls)
+    ftm = Factotum.FactorModel(X_full, 6; scale=true, method=:ls, orthonormalize=false)
 
+    # Expected values from raw LS solution (no QR orthonormalization)
     expected_factors = [
         -1.8682   -0.3544   -0.2306   -0.0071    1.7681   -0.9233
         -4.4440   -0.1107    0.1187   -0.2745   -0.2588   -0.8757
@@ -26,6 +27,6 @@
     end
 
     @testset "Loading values (last 4 rows)" begin
-        @test ftm.loadings[end-3:end, :] ≈ expected_loadings atol=1e-5
+        @test Factotum.loadings(ftm; original_units=true)[end-3:end, :] ≈ expected_loadings atol=1e-5
     end
 end

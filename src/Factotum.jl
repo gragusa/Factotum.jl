@@ -9,6 +9,49 @@ using StatsBase
 
 abstract type AbstractFactorModel end
 
+## ------------------------------------------------------------
+## Estimation Method Types
+## ------------------------------------------------------------
+
+"""
+    AbstractEstimationMethod
+
+Abstract supertype for factor model estimation methods.
+
+Subtypes: [`PCA`](@ref), [`EM`](@ref), [`LeastSquares`](@ref)
+"""
+abstract type AbstractEstimationMethod end
+
+"""
+    PCA <: AbstractEstimationMethod
+
+Principal Component Analysis estimation method.
+
+Used when data has no missing values and no constraints are specified.
+This is the default method for complete data.
+"""
+struct PCA <: AbstractEstimationMethod end
+
+"""
+    EM <: AbstractEstimationMethod
+
+Expectation-Maximization estimation method.
+
+Handles missing values (NaN) via iterative imputation. Cannot handle
+loading constraints - use [`LeastSquares`](@ref) for constrained estimation.
+"""
+struct EM <: AbstractEstimationMethod end
+
+"""
+    LeastSquares <: AbstractEstimationMethod
+
+Iterative Least Squares estimation method.
+
+Handles both missing values and loading constraints. This is the most
+flexible method but may be slower than PCA for complete data.
+"""
+struct LeastSquares <: AbstractEstimationMethod end
+
 """
     EstimationStats{V}
 
@@ -27,7 +70,7 @@ struct EstimationStats{V <: AbstractVector}
     nobs::Int
 end
 
-struct FactorModel{M <: AbstractMatrix, V <: AbstractVector, S <: EstimationStats} <: AbstractFactorModel
+struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix, V <: AbstractVector, S <: EstimationStats} <: AbstractFactorModel
     "The matrix of factors"
     factors::M
     "The matrix of loadings"
@@ -157,10 +200,14 @@ FactorModel(Z::AbstractMatrix{G}; kwargs...) where G = FactorModel(Z, size(Z,2);
 
 """
     FactorModel(Z, numfactors; demean=true, scale=false, corrected=false,
-                em=false, init=nanmean, maxiter=1000, tol=1e-8,
-                constraints=nothing, method=:auto)
+                init=nanmean, maxiter=1000, tol=1e-8,
+                constraints=nothing, method=:auto, nt_min=10,
+                orthonormalize=true)
 
 Estimate a factor model using PCA, EM, or iterative least squares.
+
+Returns a `FactorModel{E}` where `E` is the estimation method type
+([`PCA`](@ref), [`EM`](@ref), or [`LeastSquares`](@ref)).
 
 # Arguments
 - `Z`: T×n data matrix
@@ -168,13 +215,13 @@ Estimate a factor model using PCA, EM, or iterative least squares.
 - `demean`: center columns by their means
 - `scale`: standardize columns by their std
 - `corrected`: use corrected sample std
-- `em`: force use of EM algorithm (auto-enabled if NaN values detected)
 - `init`: function to compute initial fill values for missing data (nanmean or nanmedian)
-- `maxiter`: maximum EM iterations (for EM) or LS iterations (for LS)
+- `maxiter`: maximum iterations for EM or LS algorithm
 - `tol`: convergence tolerance for EM or LS algorithm
 - `constraints`: optional `LoadingConstraints` for restricted estimation (requires `:ls` method)
 - `method`: estimation method - `:auto` (default), `:pca`, `:em`, or `:ls`
 - `nt_min`: minimum observations per series for LS algorithm (default: 10)
+- `orthonormalize`: for `:ls` method, orthonormalize loadings via QR (default: true)
 
 # Methods
 - `:pca`: Standard PCA (requires no missing values, no constraints)
@@ -182,26 +229,30 @@ Estimate a factor model using PCA, EM, or iterative least squares.
 - `:ls`: Iterative least squares (handles missing values and constraints)
 - `:auto`: Automatically selects method based on data and constraints:
   - If `constraints` provided → `:ls`
-  - If missing values or `em=true` → `:em`
+  - If missing values (NaN) detected → `:em`
   - Otherwise → `:pca`
 
-# Notes
-If the data contains NaN values, the EM algorithm is automatically used to handle
-missing data (unless constraints are specified, which requires LS). The EM algorithm
-alternates between imputing missing values and re-estimating factors until convergence.
+# Querying the estimation method
+Use [`estimationmethod`](@ref) to query which method was used:
+```julia
+fm = FactorModel(X, 3)
+estimationmethod(fm)  # returns PCA(), EM(), or LeastSquares()
+```
 
 # Example with constraints
 ```julia
 # Constrain series 1 to have loading = 1.0 on factor 1
 c = normalize_loading(1, 1, 3; value=1.0)
 fm = FactorModel(X, 3; constraints=c)
+estimationmethod(fm)  # returns LeastSquares()
 ```
 """
 function FactorModel(Z::AbstractMatrix{G}, numfactors;
                      demean::Bool = true, scale::Bool = false, corrected::Bool = false,
-                     em::Bool = false, init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
+                     init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
                      constraints::Union{Nothing, LoadingConstraints} = nothing,
-                     method::Symbol = :auto, nt_min::Int = 10) where G
+                     method::Symbol = :auto, nt_min::Int = 10,
+                     orthonormalize::Bool = true) where G
     T, n = size(Z)
     T == 0 && throw(ArgumentError("Input matrix must not be empty (got size $(size(Z)))"))
     numfactors < 0 && throw(ArgumentError("numfactors must be non-negative (got $numfactors)"))
@@ -223,8 +274,8 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
     actual_method = if method == :auto
         if has_constraints
             :ls  # Constraints require iterative LS
-        elseif has_missing || em
-            :em
+        elseif has_missing
+            :em  # Missing data requires EM or LS
         else
             :pca
         end
@@ -240,23 +291,25 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
         has_constraints && throw(ArgumentError("EM method does not support constraints. Use method=:ls"))
     end
 
-    # Estimate
+    # Estimate and construct with appropriate type parameter
     if actual_method == :pca
         (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_pca(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected)
+        FactorModel{PCA, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     elseif actual_method == :em
         (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_em(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected,
             init = init, maxiter = maxiter, tol = tol)
+        FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     elseif actual_method == :ls
         (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_ls(Z, numfactors;
             constraints = constraints, demean = demean, scale = scale,
-            nt_min = nt_min, tol = tol, maxiter = maxiter)
+            nt_min = nt_min, tol = tol, maxiter = maxiter,
+            orthonormalize = orthonormalize)
+        FactorModel{LeastSquares, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     else
         throw(ArgumentError("Unknown method: $method. Use :auto, :pca, :em, or :ls"))
     end
-
-    FactorModel(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
 end
 
 function extract_pca(Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
@@ -478,7 +531,8 @@ This implementation matches the MATLAB factor_estimation_ls function:
 function extract_ls(Z, numfactors;
                     constraints::Union{Nothing, LoadingConstraints} = nothing,
                     demean::Bool = true, scale::Bool = false,
-                    nt_min::Int = 10, tol::Float64 = 1e-8, maxiter::Int = 1000)
+                    nt_min::Int = 10, tol::Float64 = 1e-8, maxiter::Int = 1000,
+                    orthonormalize::Bool = true)
     T, n = size(Z)
 
     # Standardize using available data (MATLAB uses population std)
@@ -647,17 +701,46 @@ function extract_ls(Z, numfactors;
         end
     end
 
-    # Rescale loadings to original units (MATLAB: lambda = lambda.*repmat(xstd,1,nfac_t))
-    Λ_final = scale ? Λ .* vec(σₓ) : copy(Λ)
+    # Impute missing values (like EM does) so X̄ has no NaN
+    X_imputed = copy(X)
+    for i in 1:n
+        for t in 1:T
+            if isnan(X[t, i])
+                X_imputed[t, i] = dot(@view(F[t, :]), @view(Λ[i, :]))
+            end
+        end
+    end
 
-    # Compute approximate eigenvalues from factor variances
-    λ = vec(var(F, dims=1, corrected=false))
+    # Orthonormalize loadings if requested and no constraints (so information criteria work correctly)
+    # With constraints, keep the raw LS solution to preserve constraint structure
+    if orthonormalize && constraints === nothing
+        # Orthonormalize loadings via QR decomposition
+        # Λ = Q * R, so F * Λ' = F * R' * Q' = (F * R') * Q'
+        # Let Λ_orth = Q (orthonormal), F_orth = F * R'
+        qrΛ = qr(Λ)
+        Λ_orth = Matrix(qrΛ.Q)  # n × r, orthonormal columns
+        F_orth = F * Matrix(qrΛ.R)'  # T × r
 
-    # Compute residuals (on standardized data)
-    ε = X .- F * Λ'
+        # Eigenvalues from orthonormalized factor variances
+        λ = vec(var(F_orth, dims=1, corrected=false))
+
+        # Store orthonormal loadings (same convention as PCA/EM)
+        # loadings(fm; original_units=true) will return Λ .* σₓ
+        Λ_final = Λ_orth
+
+        # Compute residuals (on standardized, imputed data)
+        ε = X_imputed .- F_orth * Λ_orth'
+    else
+        # With constraints: keep raw LS solution to preserve constraints
+        # Note: Information criteria may not work correctly with constrained LS
+        F_orth = F
+        λ = vec(var(F, dims=1, corrected=false))
+        Λ_final = Λ  # Store standardized loadings (preserves constraints)
+        ε = X_imputed .- F * Λ'
+    end
 
     stats = EstimationStats(tss, ssr, r2vec, nobs)
-    (F, Λ_final, λ, ε, μ, σₓ, Z, X, stats)
+    (F_orth, Λ_final, λ, ε, μ, σₓ, Z, X_imputed, stats)
 end
 
 
@@ -822,12 +905,45 @@ Return the number of non-missing observations used for estimation.
 """
 nobs(fm::FactorModel) = fm.stats.nobs
 
+"""
+    estimationmethod(fm::FactorModel)
+
+Return the estimation method used to fit the factor model.
+
+Returns one of: `PCA()`, `EM()`, or `LeastSquares()`.
+
+# Example
+```julia
+fm = FactorModel(X, 3)
+estimationmethod(fm)  # returns PCA()
+
+fm_em = FactorModel(X_with_nans, 3)
+estimationmethod(fm_em)  # returns EM()
+
+fm_ls = FactorModel(X, 3; method=:ls)
+estimationmethod(fm_ls)  # returns LeastSquares()
+```
+"""
+estimationmethod(::FactorModel{E}) where {E} = E()
+
 ## Output
-function Base.show(io::IO, fm::AbstractFactorModel)
+
+# Helper functions for method names
+_method_name(::Type{PCA}) = "Principal Component Analysis"
+_method_name(::Type{EM}) = "EM Algorithm"
+_method_name(::Type{LeastSquares}) = "Iterative Least Squares"
+
+function Base.show(io::IO, fm::FactorModel{E}) where {E}
     printstyled(io, "\nStatic Factor Model\n", color = :green)
     @printf io "Dimensions of X..........: %s\n" size(fm)
     @printf io "Number of factors........: %s\n" numfactors(fm)
-    @printf io "Factors calculated by....: %s\n" "Principal Component"
+    @printf io "Estimation method........: %s\n" _method_name(E)
+end
+
+function Base.show(io::IO, fmv::FactorModelView)
+    printstyled(io, "\nStatic Factor Model (View)\n", color = :green)
+    @printf io "Dimensions of X..........: %s\n" size(fmv.X̄)
+    @printf io "Number of factors........: %s\n" numfactors(fmv)
 end
 
 """
@@ -891,9 +1007,10 @@ struct InformationCriterion{M <: AbstractInformationCriterion, T<:AbstractFloat}
 end
 
 ## Calculate V(F̂ᵏ) for k ⩽ kₘₐₓ
+## Uses NaN-aware sum to handle LS method with missing data
 function V(fmv::FactorModelView)
     ε = residuals(fmv)
-    sum(abs2, ε) / length(ε)
+    NaNStatistics.nansum(abs2.(ε)) / count(!isnan, ε)
 end
 
 V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j ∈ 1:kₘₐₓ]    
@@ -909,7 +1026,7 @@ function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) wh
     T, n = size(fm)
     rnge = 1:kₘₐₓ
     σ̂²  = variance_factor(s, fm, kₘₐₓ)
-    VV = [sum(abs2, fm.X̄) / length(fm.X̄); V(fm, kₘₐₓ)]
+    VV = [NaNStatistics.nansum(abs2.(fm.X̄)) / count(!isnan, fm.X̄); V(fm, kₘₐₓ)]
     Vₖ = transform_V.(s, VV)
     gₜₙ = map(k -> k*penalty(s, T, n, k), 0:last(rnge))
     InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, 0:last(rnge))
@@ -1115,6 +1232,8 @@ penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
 export FactorModel, EstimationStats, describe,
        numfactors, factors, loadings, explained_variance,
+       # Estimation method types and accessor
+       AbstractEstimationMethod, PCA, EM, LeastSquares, estimationmethod,
        # Estimation statistics
        stats, tss, ssr, r2, nobs,
        # Information criteria

@@ -1,4 +1,5 @@
 using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
+using CSV, DataFrames
 
 @testset "Factotum.jl" begin
 
@@ -152,6 +153,30 @@ using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
         end
     end
 
+    @testset "Information criteria with LS method and missing data" begin
+        # Use macrodata which has real missing values
+        datapath = joinpath(@__DIR__, "data", "macrodata.csv")
+        df = CSV.read(datapath, DataFrame)
+        X_full = Matrix{Float64}(df[:, 2:end])
+
+        fm_em = FactorModel(X_full, 10; method = :em, scale = true)
+        fm_ls = FactorModel(X_full, 10; method = :ls, scale = true)
+
+        ic_em = IC1(fm_em, 10)
+        ic_ls = IC1(fm_ls, 10)
+
+        # Both should work (no NaN in criterion values)
+        @test !any(isnan, criterion(ic_em))
+        @test !any(isnan, criterion(ic_ls))
+
+        # Test all criterion types work with LS and missing data
+        criteria = [IC1, IC2, IC3, BIC1, BIC2, BIC3]
+        for C in criteria
+            ic = C(fm_ls, 10)
+            @test !any(isnan, criterion(ic))
+        end
+    end
+
     @testset "describe and show" begin
         X = randn(50, 10)
         fm = FactorModel(X, 3)
@@ -182,7 +207,7 @@ using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
         X = randn(100, 10)
 
         fm_standard = FactorModel(X, 3; scale=true)
-        fm_em = FactorModel(X, 3; scale=true, em=true)
+        fm_em = FactorModel(X, 3; scale=true, method=:em)
 
         # Results should be very close (up to sign flips in factors/loadings)
         @test numfactors(fm_standard) == numfactors(fm_em)
@@ -547,6 +572,94 @@ using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
         # Constraint with wrong number of factors in R
         c_bad_r = LoadingConstraints([1], [1.0 0.0 0.0 0.0], [1.0])  # 4 cols but r=3
         @test_throws ArgumentError FactorModel(X, r; constraints=c_bad_r)
+    end
+
+    @testset "Estimation method types and accessor" begin
+        Random.seed!(42)
+        X = randn(100, 10)
+        r = 3
+
+        # Test PCA method type
+        fm_pca = FactorModel(X, r; method=:pca)
+        @test estimationmethod(fm_pca) isa PCA
+        @test estimationmethod(fm_pca) == PCA()
+
+        # Test EM method type
+        fm_em = FactorModel(X, r; method=:em)
+        @test estimationmethod(fm_em) isa EM
+        @test estimationmethod(fm_em) == EM()
+
+        # Test LeastSquares method type
+        fm_ls = FactorModel(X, r; method=:ls)
+        @test estimationmethod(fm_ls) isa LeastSquares
+        @test estimationmethod(fm_ls) == LeastSquares()
+
+        # Test auto-selection: default (complete data) -> PCA
+        fm_auto = FactorModel(X, r)
+        @test estimationmethod(fm_auto) isa PCA
+
+        # Test auto-selection: missing data -> EM
+        X_missing = copy(X)
+        X_missing[1:5, 1] .= NaN
+        fm_auto_em = FactorModel(X_missing, r)
+        @test estimationmethod(fm_auto_em) isa EM
+
+        # Test auto-selection: constraints -> LeastSquares
+        c = normalize_loading(1, 1, r)
+        fm_auto_ls = FactorModel(X, r; constraints=c)
+        @test estimationmethod(fm_auto_ls) isa LeastSquares
+
+        # Test type hierarchy
+        @test PCA <: AbstractEstimationMethod
+        @test EM <: AbstractEstimationMethod
+        @test LeastSquares <: AbstractEstimationMethod
+    end
+
+    @testset "Estimation method in show output" begin
+        Random.seed!(42)
+        X = randn(50, 10)
+        r = 3
+
+        # Test PCA output
+        fm_pca = FactorModel(X, r; method=:pca)
+        io = IOBuffer()
+        show(io, fm_pca)
+        output = String(take!(io))
+        @test occursin("Principal Component Analysis", output)
+
+        # Test EM output
+        fm_em = FactorModel(X, r; method=:em)
+        io = IOBuffer()
+        show(io, fm_em)
+        output = String(take!(io))
+        @test occursin("EM Algorithm", output)
+
+        # Test LS output
+        fm_ls = FactorModel(X, r; method=:ls)
+        io = IOBuffer()
+        show(io, fm_ls)
+        output = String(take!(io))
+        @test occursin("Iterative Least Squares", output)
+    end
+
+    @testset "Type parameter dispatch" begin
+        Random.seed!(42)
+        X = randn(50, 10)
+        r = 3
+
+        # Test that we can dispatch on the estimation method type
+        fm_pca = FactorModel(X, r; method=:pca)
+        fm_em = FactorModel(X, r; method=:em)
+        fm_ls = FactorModel(X, r; method=:ls)
+
+        # Define a test function that dispatches on method type
+        test_dispatch(::FactorModel{PCA}) = :pca
+        test_dispatch(::FactorModel{EM}) = :em
+        test_dispatch(::FactorModel{LeastSquares}) = :ls
+
+        @test test_dispatch(fm_pca) == :pca
+        @test test_dispatch(fm_em) == :em
+        @test test_dispatch(fm_ls) == :ls
     end
 
     include("test_sw.jl")
