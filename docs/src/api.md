@@ -8,6 +8,53 @@ This page documents all exported types and functions in Factotum.jl.
 FactorModel
 ```
 
+## Estimation Method Types
+
+The estimation method is encoded as a type parameter on `FactorModel{E}`:
+
+```@docs
+AbstractEstimationMethod
+PCA
+EM
+LeastSquares
+```
+
+### Querying the Estimation Method
+
+```@docs
+estimationmethod
+```
+
+### Example: Method-specific Dispatch
+
+```@example api
+using Factotum
+using Random
+Random.seed!(42)
+
+X = randn(100, 20)
+
+# Default (complete data) uses PCA
+fm_pca = FactorModel(X, 3)
+println("Method: ", estimationmethod(fm_pca))
+
+# Explicit EM
+fm_em = FactorModel(X, 3; method=:em)
+println("Method: ", estimationmethod(fm_em))
+
+# Explicit LS
+fm_ls = FactorModel(X, 3; method=:ls)
+println("Method: ", estimationmethod(fm_ls))
+
+# Dispatch on estimation method type
+describe_method(::FactorModel{PCA}) = "Fitted using Principal Component Analysis"
+describe_method(::FactorModel{EM}) = "Fitted using EM Algorithm"
+describe_method(::FactorModel{LeastSquares}) = "Fitted using Iterative Least Squares"
+
+println(describe_method(fm_pca))
+println(describe_method(fm_ls))
+```
+
 ## Factor Model Functions
 
 ### Estimation
@@ -120,16 +167,102 @@ X[rand(100, 20) .< 0.1] .= NaN
 # Fit model - EM algorithm is used automatically
 fm = FactorModel(X, 3; scale=true)
 println("Model fitted with $(numfactors(fm)) factors")
+println("Estimation method: ", estimationmethod(fm))  # EM()
 ```
 
-### EM Algorithm Parameters
+### Method Selection
+
+The `method` parameter controls which estimation algorithm is used:
+
+| Method | When to Use | Supports Missing Data | Supports Constraints |
+|--------|-------------|----------------------|---------------------|
+| `:pca` | Complete data, no constraints | No | No |
+| `:em` | Missing data, no constraints | Yes | No |
+| `:ls` | Constraints or missing data | Yes | Yes |
+| `:auto` | Let Factotum choose (default) | - | - |
+
+Auto-selection logic:
+1. If `constraints` provided → `:ls`
+2. If missing values (NaN) detected → `:em`
+3. Otherwise → `:pca`
+
+### EM/LS Algorithm Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `em` | `false` | Force EM algorithm (auto-enabled if NaN detected) |
+| `method` | `:auto` | Estimation method (`:pca`, `:em`, `:ls`, or `:auto`) |
 | `init` | `nanmean` | Initial imputation function (`nanmean` or `nanmedian`) |
-| `maxiter` | `1000` | Maximum EM iterations |
+| `maxiter` | `1000` | Maximum iterations (EM or LS) |
 | `tol` | `1e-8` | Convergence tolerance |
+| `nt_min` | `10` | Minimum observations per series (LS only) |
+| `orthonormalize` | `true` | For LS method, orthonormalize loadings via QR (set `false` for raw LS solution) |
+
+## Constrained Estimation
+
+The `:ls` method supports linear constraints on factor loadings for identification, sign normalization, or zero restrictions.
+
+### Loading Constraints Types
+
+```@docs
+LoadingConstraints
+normalize_loading
+zero_loading
+```
+
+### Creating Constraints
+
+```@example api
+using Factotum
+
+# Fix loading of series 1 on factor 1 to 1.0 (sign normalization)
+c1 = normalize_loading(1, 1, 3; value=1.0)
+
+# Set loading of series 5 on factor 2 to zero
+c2 = zero_loading(5, 2, 3)
+
+# Combine constraints
+constraints = vcat(c1, c2)
+```
+
+### Using Constraints
+
+```@example api
+using Random
+Random.seed!(42)
+X = randn(100, 20)
+
+# Fit constrained model
+c = normalize_loading(1, 1, 3; value=1.0)
+fm = FactorModel(X, 3; constraints=c, scale=true)
+
+# Verify constraint is satisfied
+println("Loading[1,1] = ", round(loadings(fm)[1, 1], digits=6))
+println("Method: ", estimationmethod(fm))
+```
+
+### Matrix Format for Constraints
+
+For complex constraints, use a matrix where each row is `[series, R₁, ..., Rₖ, r]`:
+
+```@example api
+# Constraint: series 1, factor 1 loading = 1.0
+# Format: [series, R₁, R₂, R₃, r] where R·λ = r
+constraint_matrix = [
+    1.0  1.0  0.0  0.0  1.0   # 1*λ₁ + 0*λ₂ + 0*λ₃ = 1.0
+]
+c = LoadingConstraints(constraint_matrix)
+```
+
+## Estimation Statistics
+
+```@docs
+EstimationStats
+stats
+tss
+ssr
+r2
+nobs
+```
 
 ## Complete API Index
 

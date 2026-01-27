@@ -1,14 +1,16 @@
 # Factotum.jl
 
-*A Julia package for estimating static factor models using Principal Component Analysis (PCA).*
+*A Julia package for estimating static factor models.*
 
 ## Overview
 
 Factotum.jl provides tools for estimating factor models from panel data. The package supports:
 
-- **Principal Component Analysis (PCA)** for extracting latent factors from high-dimensional data
-- **EM algorithm** for handling missing values (NaN) in the data
+- **Three estimation methods**: PCA (default), EM algorithm (for missing data), and Iterative Least Squares (for constrained estimation)
+- **Automatic method selection** based on data characteristics and constraints
+- **Type-parameterized models** (`FactorModel{PCA}`, `FactorModel{EM}`, `FactorModel{LeastSquares}`) enabling method-specific dispatch
 - **Information criteria** (IC, PCp, AIC, BIC variants) for selecting the optimal number of factors
+- **Loading constraints** for identification and restricted estimation
 - **Efficient computation** that automatically selects the optimal eigendecomposition strategy based on data dimensions
 
 ## Installation
@@ -78,6 +80,23 @@ println("Missing values: ", sum(isnan.(X_full)), " (", round(100 * sum(isnan.(X_
 # Fit model - EM algorithm is automatically used
 fm_em = FactorModel(X_full, 5; scale=true)
 Factotum.describe(fm_em)
+
+# Query which estimation method was used
+println("Estimation method: ", estimationmethod(fm_em))
+```
+
+## Querying the Estimation Method
+
+Each `FactorModel` is parameterized by its estimation method type. You can query the method and dispatch on it:
+
+```@example quickstart
+# Check which method was used
+println("Balanced data method: ", estimationmethod(fm))      # PCA()
+println("Missing data method: ", estimationmethod(fm_em))    # EM()
+
+# The method is part of the type
+println("Type of fm: ", typeof(fm))
+println("Type of fm_em: ", typeof(fm_em))
 ```
 
 ## Contents

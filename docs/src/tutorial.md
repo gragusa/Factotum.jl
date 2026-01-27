@@ -1,22 +1,41 @@
 # Tutorial
 
-This tutorial walks through the main features of Factotum.jl, from basic factor model estimation to advanced model selection and missing data handling.
+This tutorial showcases the main features of `Factotum.jl,`ranging from basic factor model estimation to advanced model selection and missing-data handling.
 
 ## Background: Factor Models
 
-Factor models represent high-dimensional data as a combination of a few latent factors plus idiosyncratic noise:
+Dynamic factor models represent high-dimensional data as a combination of a few latent factors plus idiosyncratic noise:
+$$
+\begin{align*}
+\underset{(N\times1)}{X_{t}}	&=\underset{(N\times r)}{\Lambda\vphantom{_t}}\underset{(r\times1)}{F_{t}}+\underset{(N\times1)}{e_{t}}\\
+\underset{(r\times1)}{F_{t}}	&=\underset{(r\times r)}{\Phi\vphantom{_t}}\underset{(r\times1)}{F_{t-1}}+\underset{(r\times m)}{R\vphantom{_t}}\underset{(m\times1)}{\eta_{t}}
+\end{align*},
+$$
+where $F_t$ is a vector of latent _factors_, $\Lambda$ is a matrix of _loading_, $e_t$ is the idiosyncratic error. The second equation spcifies the dynamic of $F_t$ as a VAR with matrix coefficient $\Phi$, error $\eta_t$ and selection matrix $R$. Commonly this model is  Notice that each element of $X_{it}$ can be expressed as
+$$
+X_{it} = \lambda_i' F_t + e_{it}, \quad i=1,\ldots, N, \, \, t = 1,\ldots, T.
+$$
+The errors $e_t$ and $\eta_t$ are assumed to be serially uncorrelated 
 
-```math
-X_{it} = \lambda_i' F_t + \varepsilon_{it}
-```
 
-where:
-- ``X`` is a ``T \times n`` data matrix (``T`` time periods, ``n`` variables)
-- ``F`` is a ``T \times r`` matrix of latent factors
-- ``\Lambda`` is an ``n \times r`` matrix of factor loadings
-- ``\varepsilon`` is the idiosyncratic error term
 
-Factotum.jl estimates ``F`` and ``\Lambda`` using Principal Component Analysis (PCA).
+`Factotum.jl` estimates ``F`` and $\Lambda$ using Principal Component Analysis (PCA), EM algorithm (for missing data), or iterative Least Squares (for constrained estimation).
+
+### Principal Component Estimation
+
+Principal component estimation proceeds by solving the following optimization problem
+$$
+\min_{(F_{1},\ldots,F_{T},\Lambda)}\frac{1}{NT}\sum_{t=1}^{T}(X_{t}-\Lambda F_{t})'(X_{t}-\Lambda F_{t}).
+$$
+The solution is sought by imposing the following normalization:
+$$
+\Lambda'\Lambda = I_n
+$$
+
+
+
+
+
 
 ## Basic Usage
 
@@ -253,11 +272,14 @@ Control the EM algorithm behavior:
 # Custom EM settings
 fm_em_custom = FactorModel(X_full, 5;
     scale=true,
-    em=true,              # Force EM (auto-enabled with NaN anyway)
+    method=:em,           # Explicit EM (auto-selected with NaN anyway)
     init=Factotum.NaNStatistics.nanmedian,  # Use median for initial imputation
     maxiter=2000,         # Maximum iterations
     tol=1e-10             # Convergence tolerance
 )
+
+# Check which method was used
+println("Method used: ", estimationmethod(fm_em_custom))
 nothing # hide
 ```
 
@@ -273,6 +295,230 @@ The EM algorithm alternates between:
 2. **M-step**: Re-estimate factors via PCA on the completed data
 
 The algorithm iterates until the maximum change in imputed values falls below the tolerance.
+
+### Alternative: Iterative Least Squares
+
+The `:ls` (Least Squares) method can also handle missing data. It works differently from EM:
+
+- **EM**: Imputes missing values, then runs PCA on completed data
+- **LS**: Skips missing values during regression updates (no imputation)
+
+Both methods should identify the same underlying factor structure. Let's verify this using the macroeconomic data.
+
+## Comparing EM and LS on Missing Data
+
+When data contains missing values, both EM and LS can estimate factors. While the factors themselves may differ in scale and rotation, they should span the **same column space** — meaning any factor from one method can be expressed as a linear combination of factors from the other.
+
+### Fitting Both Models
+
+```@example tutorial
+# Examine the missing data pattern
+n_missing = sum(isnan.(X_full))
+cols_with_missing = sum(any(isnan.(X_full), dims=1))
+pct_missing = round(100 * n_missing / length(X_full), digits=1)
+
+println("Dataset: $(size(X_full, 1)) × $(size(X_full, 2))")
+println("Missing values: $n_missing ($pct_missing%)")
+println("Columns with missing data: $cols_with_missing / $(size(X_full, 2))")
+```
+
+```@example tutorial
+# Fit factor models using both methods
+r = 5  # number of factors
+
+# EM algorithm (iterative imputation + PCA)
+fm_em = FactorModel(X_full, r; method=:em, scale=true, tol=1e-10, maxiter=2000)
+
+# Iterative Least Squares (skips missing values)
+fm_ls = FactorModel(X_full, r; method=:ls, scale=true, tol=1e-10, maxiter=2000)
+
+println("EM method:  ", estimationmethod(fm_em))
+println("LS method:  ", estimationmethod(fm_ls))
+```
+
+### Comparing Factor Spaces
+
+To compare factor spaces, we compute **canonical correlations** between them. If two sets of factors span the same space, all canonical correlations will be 1.0 (or very close to it).
+
+The canonical correlations are the singular values of ``Q_1' Q_2``, where ``Q_1`` and ``Q_2`` are orthonormal bases for the two factor spaces.
+
+```@example tutorial
+# Extract factors
+F_em = factors(fm_em)
+F_ls = factors(fm_ls)
+
+# Compute canonical correlations between factor spaces
+function canonical_correlations(F1, F2)
+    # Get orthonormal bases via QR decomposition
+    Q1 = Matrix(qr(F1).Q)
+    Q2 = Matrix(qr(F2).Q)
+    # Canonical correlations are singular values of Q1'Q2
+    return svd(Q1' * Q2).S
+end
+
+cc = canonical_correlations(F_em, F_ls)
+
+println("Canonical correlations between EM and LS factor spaces:")
+for (i, c) in enumerate(cc)
+    println("  Factor $i: ", round(c, digits=6))
+end
+```
+
+```@example tutorial
+# Compute principal angles (in degrees)
+# Angle = arccos(canonical correlation)
+println("Principal angles between subspaces:")
+for (i, c) in enumerate(cc)
+    angle = acosd(min(c, 1.0))  # clamp to handle numerical precision
+    println("  Angle $i: ", round(angle, digits=4), "°")
+end
+
+# Summary statistic: trace R² (average squared canonical correlation)
+trace_r2 = sum(cc.^2) / length(cc)
+println("\nTrace R² (subspace similarity): ", round(trace_r2, digits=6))
+```
+
+### Interpretation
+
+The results show that:
+
+1. **All canonical correlations ≈ 1.0**: The factor spaces are essentially identical
+2. **Principal angles ≈ 0°**: There is no meaningful angle between the subspaces
+3. **Trace R² ≈ 1.0**: Perfect subspace overlap
+
+This confirms that EM and LS identify the same latent factor structure, despite using different algorithms to handle missing data.
+
+### Why Eigenvalues Differ
+
+While the factor spaces are identical, the eigenvalues may differ:
+
+```@example tutorial
+λ_em = eigvals(fm_em)
+λ_ls = eigvals(fm_ls)
+
+println("Eigenvalue comparison:")
+println("  Factor    EM          LS          Ratio (LS/EM)")
+for i in 1:r
+    ratio = λ_ls[i] / λ_em[i]
+    println("  $i         ", round(λ_em[i], digits=2), "       ",
+            round(λ_ls[i], digits=2), "       ", round(ratio, digits=3))
+end
+```
+
+The eigenvalues differ because:
+- **EM** uses PCA normalization where loadings are orthonormal (``\Lambda'\Lambda = I``)
+- **LS** uses regression-based estimation without this constraint
+
+The factor *space* is the same, but the scaling differs. This is analogous to how the same subspace can be spanned by different (but equivalent) basis vectors.
+
+### Choosing Between EM and LS
+
+| Criterion | EM | LS |
+|-----------|----|----|
+| **Missing data** | Imputes values | Skips missing |
+| **Constraints** | Not supported | Supported |
+| **Output** | Imputed data available in `fm.X̄` | Original data preserved |
+| **Normalization** | PCA-style (``\Lambda'\Lambda = I``) | Regression-based |
+| **Use when** | You need imputed values | You need loading constraints |
+
+For most applications with missing data and no constraints, both methods will give equivalent results. Choose based on whether you need:
+- **Imputed data**: Use `:em` — access via `fm.X̄`
+- **Loading constraints**: Use `:ls` — see the constrained estimation section below
+
+## Constrained Factor Estimation
+
+The iterative Least Squares method supports linear constraints on factor loadings. This is useful for:
+
+- **Sign normalization**: Fixing the sign of a factor (e.g., requiring positive loading on a reference variable)
+- **Zero restrictions**: Excluding certain variables from loading on specific factors
+- **Identification**: Imposing structure for economic interpretation
+
+### Creating Constraints
+
+Use `normalize_loading` to fix a loading value:
+
+```@example tutorial
+# Create a 3-factor model where series 1 has loading = 1.0 on factor 1
+c1 = normalize_loading(1, 1, 3; value=1.0)
+```
+
+Use `zero_loading` to set a loading to zero:
+
+```@example tutorial
+# Series 5 has zero loading on factor 2
+c2 = zero_loading(5, 2, 3)
+```
+
+Combine multiple constraints with `vcat`:
+
+```@example tutorial
+# Combined constraints
+constraints = vcat(c1, c2)
+```
+
+### Fitting a Constrained Model
+
+```@example tutorial
+# Fit constrained model (LS method is auto-selected)
+fm_constrained = FactorModel(X, 3; constraints=c1, scale=true)
+
+# Verify method selection
+println("Method: ", estimationmethod(fm_constrained))
+
+# Check the constrained loading
+Lambda_c = loadings(fm_constrained)
+println("Loading of series 1 on factor 1: ", round(Lambda_c[1, 1], digits=6))
+```
+
+### Constraint Matrix Format
+
+For more complex constraints, you can specify them as a matrix where each row is `[series_index, R₁, R₂, ..., Rₖ, r]` representing the constraint ``R \cdot \lambda_i = r``:
+
+```@example tutorial
+# Equivalent to normalize_loading(1, 1, 3; value=1.0)
+# Row: [series=1, R=[1,0,0], r=1.0] meaning 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
+constraint_matrix = [
+    1.0  1.0  0.0  0.0  1.0   # Series 1: λ₁ = 1
+]
+c_from_matrix = LoadingConstraints(constraint_matrix)
+
+fm_matrix = FactorModel(X, 3; constraints=c_from_matrix, scale=true)
+println("Loading (matrix format): ", round(loadings(fm_matrix)[1, 1], digits=6))
+```
+
+### Constraints with Missing Data
+
+The LS method handles both constraints and missing data simultaneously:
+
+```@example tutorial
+# Constrained estimation with missing data
+fm_constrained_missing = FactorModel(X_full, 3; constraints=c1, scale=true)
+println("Method: ", estimationmethod(fm_constrained_missing))
+println("Constrained loading: ", round(loadings(fm_constrained_missing)[1, 1], digits=6))
+```
+
+### Orthonormalization Option
+
+By default, the LS method orthonormalizes loadings via QR decomposition to match PCA/EM conventions (``\Lambda'\Lambda = I``). You can disable this to get the raw LS solution:
+
+```@example tutorial
+# With orthonormalization (default)
+fm_orth = FactorModel(X, 3; method=:ls, scale=true, orthonormalize=true)
+
+# Without orthonormalization (raw LS solution)
+fm_raw = FactorModel(X, 3; method=:ls, scale=true, orthonormalize=false)
+
+# Check if loadings are orthonormal
+LtL_orth = loadings(fm_orth)' * loadings(fm_orth)
+LtL_raw = loadings(fm_raw)' * loadings(fm_raw)
+
+println("Λ'Λ with orthonormalization (should be ≈ I):")
+println("  Diagonal: ", round.(diag(LtL_orth), digits=4))
+println("  Off-diag max: ", round(maximum(abs.(LtL_orth - I(3))), digits=6))
+
+println("\nΛ'Λ without orthonormalization:")
+println("  Diagonal: ", round.(diag(LtL_raw), digits=4))
+```
 
 ## Practical Example: Macroeconomic Factor Analysis
 
@@ -306,6 +552,64 @@ for k in 1:r_selected
 end
 ```
 
+## Estimation Methods
+
+Factotum.jl supports three estimation methods, each encoded as a type parameter on the `FactorModel`:
+
+| Method | Type | Use Case |
+|--------|------|----------|
+| PCA | `FactorModel{PCA}` | Complete data, no constraints (default) |
+| EM | `FactorModel{EM}` | Missing data, no constraints |
+| Least Squares | `FactorModel{LeastSquares}` | Constraints and/or missing data |
+
+### Querying the Estimation Method
+
+Use `estimationmethod(fm)` to find out which method was used:
+
+```@example tutorial
+# Compare estimation methods
+fm_pca = FactorModel(X, 3; method=:pca)
+fm_em = FactorModel(X, 3; method=:em)
+fm_ls = FactorModel(X, 3; method=:ls)
+
+println("PCA model: ", estimationmethod(fm_pca))
+println("EM model: ", estimationmethod(fm_em))
+println("LS model: ", estimationmethod(fm_ls))
+```
+
+### Dispatching on Estimation Method
+
+Since the estimation method is part of the type, you can write specialized methods:
+
+```@example tutorial
+# Define method-specific behavior
+model_info(::FactorModel{PCA}) = "Fast eigendecomposition for complete data"
+model_info(::FactorModel{EM}) = "Iterative imputation for missing data"
+model_info(::FactorModel{LeastSquares}) = "Flexible method with constraint support"
+
+println("fm_pca: ", model_info(fm_pca))
+println("fm_ls: ", model_info(fm_ls))
+```
+
+### Auto-Selection
+
+By default (`method=:auto`), the method is selected automatically:
+
+```@example tutorial
+# Auto-selects PCA (no missing data, no constraints)
+fm_auto1 = FactorModel(X, 3)
+println("Complete data → ", estimationmethod(fm_auto1))
+
+# Auto-selects EM (missing data detected)
+fm_auto2 = FactorModel(X_full, 3)
+println("Missing data → ", estimationmethod(fm_auto2))
+
+# Auto-selects LeastSquares (constraints provided)
+c = normalize_loading(1, 1, 3)
+fm_auto3 = FactorModel(X, 3; constraints=c)
+println("With constraints → ", estimationmethod(fm_auto3))
+```
+
 ## Tips and Best Practices
 
 1. **Scaling**: Use `scale=true` when variables have different units or variances
@@ -313,3 +617,4 @@ end
 3. **Missing data**: The EM algorithm works well for moderate amounts of missing data (< 30%)
 4. **Large datasets**: For very large panels, consider starting with fewer factors and increasing gradually
 5. **Interpretation**: Factor loadings indicate which variables load on each factor; use `loadings(fm)` to examine patterns
+6. **Method selection**: Use `estimationmethod(fm)` to verify which algorithm was used for your model
