@@ -1,6 +1,6 @@
 # Factotum.jl
 
-[![Build Status](https://github.com/gragusa/Factotum.jl/workflows/CI/badge.svg)](https://github.com/gragusa/Factotum.jl/actions) [![codecov.io](http://codecov.io/github/gragusa/Factotum.jl/coverage.svg?branch=master)](http://codecov.io/github/gragusa/Factotum.jl?branch=master) [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) ![SciML Code Style](https://img.shields.io/static/v1?label=code%20style&message=SciML&color=9558b2&labelColor=389826)
+[![CI](https://github.com/gragusa/Factotum.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/gragusa/Factotum.jl/actions/workflows/CI.yml) [![codecov.io](http://codecov.io/github/gragusa/Factotum.jl/coverage.svg?branch=master)](http://codecov.io/github/gragusa/Factotum.jl?branch=master) [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) ![SciML Code Style](https://img.shields.io/static/v1?label=code%20style&message=SciML&color=9558b2&labelColor=389826) ![lifecycle](https://img.shields.io/badge/lifecycle-stable-green.svg)
 
 A Julia package for estimating **static factor models**. 
 

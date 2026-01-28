@@ -1,42 +1,38 @@
-name: Format
+name: Auto-format (pushes in repo)
 
 on:
   push:
-    branches:
-      - master
-      - main
-  pull_request:
+    branches: ["**"] # or ['main', 'develop', 'feature/**']
+
+permissions:
+  contents: write
 
 jobs:
-  format:
-    name: Julia Formatter
+  format-fix:
+    if: "!contains(github.event.head_commit.message, 'auto-format with JuliaFormatter')"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
         with:
           version: '1'
+
       - name: Install JuliaFormatter
         run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
-      - name: Format code
+
+      - name: Run formatter (sciml)
+        run: julia -e 'using JuliaFormatter; format(".", verbose=true)'
+
+      - name: Commit & push if changed
         run: |
-          julia -e '
-            using JuliaFormatter
-            format("src", SciMLStyle())
-            format("test", SciMLStyle())
-          '
-      - name: Check formatting
-        run: |
-          julia -e '
-            using JuliaFormatter
-            out = IOBuffer()
-            if !format("src", SciMLStyle(), overwrite=false)
-                println("src/ is not formatted correctly")
-                exit(1)
-            end
-            if !format("test", SciMLStyle(), overwrite=false)
-                println("test/ is not formatted correctly")
-                exit(1)
-            end
-            println("All files are formatted correctly!")
-          '
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "style: auto-format with JuliaFormatter (sciml)"
+            git push
+          fi

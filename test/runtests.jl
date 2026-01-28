@@ -2,7 +2,6 @@ using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
 using CSV, DataFrames
 
 @testset "Factotum.jl" begin
-
     @testset "Basic factor model (T > n)" begin
         T, n, r = (200, 10, 6)
         x = rand(T, n)
@@ -14,7 +13,7 @@ using CSV, DataFrames
 
         # Check diagonality of cov(F)
         Σ = cov(F; corrected = false)
-        @test Σ ≈ diagm(0 => σ.^2)
+        @test Σ ≈ diagm(0 => σ .^ 2)
 
         # Check Λ'Λ = I (loadings are orthonormal)
         @test Λ'Λ ≈ diagm(0 => ones(r))
@@ -50,19 +49,19 @@ using CSV, DataFrames
         X = randn(100, 10) .+ 5  # shifted data
 
         # Test demean=true (default)
-        fm_demean = FactorModel(X, 5; demean=true, scale=false)
+        fm_demean = FactorModel(X, 5; demean = true, scale = false)
         @test numfactors(fm_demean) == 5
 
         # Test demean=false
-        fm_nodemean = FactorModel(X, 5; demean=false, scale=false)
+        fm_nodemean = FactorModel(X, 5; demean = false, scale = false)
         @test numfactors(fm_nodemean) == 5
 
         # Test scale=true
-        fm_scaled = FactorModel(X, 5; demean=true, scale=true)
+        fm_scaled = FactorModel(X, 5; demean = true, scale = true)
         @test numfactors(fm_scaled) == 5
 
         # Test both false
-        fm_raw = FactorModel(X, 5; demean=false, scale=false)
+        fm_raw = FactorModel(X, 5; demean = false, scale = false)
         @test numfactors(fm_raw) == 5
     end
 
@@ -197,7 +196,7 @@ using CSV, DataFrames
 
     @testset "Criterion from matrix directly" begin
         X = randn(100, 10)
-        ic = IC1(X, 5; scale=true)
+        ic = IC1(X, 5; scale = true)
         @test length(criterion(ic)) == 6
     end
 
@@ -206,8 +205,8 @@ using CSV, DataFrames
         Random.seed!(42)
         X = randn(100, 10)
 
-        fm_standard = FactorModel(X, 3; scale=true)
-        fm_em = FactorModel(X, 3; scale=true, method=:em)
+        fm_standard = FactorModel(X, 3; scale = true)
+        fm_em = FactorModel(X, 3; scale = true, method = :em)
 
         # Results should be very close (up to sign flips in factors/loadings)
         @test numfactors(fm_standard) == numfactors(fm_em)
@@ -233,7 +232,7 @@ using CSV, DataFrames
         X_missing[missing_mask] .= NaN
 
         # Fit model with missing values
-        fm = FactorModel(X_missing, r; scale=true)
+        fm = FactorModel(X_missing, r; scale = true)
 
         @test numfactors(fm) == r
         @test size(factors(fm)) == (T, r)
@@ -248,7 +247,7 @@ using CSV, DataFrames
         X_reconstructed = F * Λ'
 
         # Compare reconstruction on non-missing positions
-        X_centered = (X_complete .- mean(X_complete; dims=1)) ./ std(X_complete; dims=1)
+        X_centered = (X_complete .- mean(X_complete; dims = 1)) ./ std(X_complete; dims = 1)
         @test !any(isnan, X_reconstructed)
     end
 
@@ -266,7 +265,7 @@ using CSV, DataFrames
         missing_mask = rand(T, n) .< 0.1
         X_missing[missing_mask] .= NaN
 
-        fm = FactorModel(X_missing, r; scale=true)
+        fm = FactorModel(X_missing, r; scale = true)
 
         @test numfactors(fm) == r
         @test size(factors(fm)) == (T, r)
@@ -282,17 +281,17 @@ using CSV, DataFrames
         X[1:5, 1] .= NaN  # some missing values
 
         # Test with nanmean (default)
-        fm_mean = FactorModel(X, r; init=nanmean)
+        fm_mean = FactorModel(X, r; init = nanmean)
         @test numfactors(fm_mean) == r
         @test !any(isnan, fm_mean.X̄)
 
         # Test with nanmedian
-        fm_median = FactorModel(X, r; init=nanmedian)
+        fm_median = FactorModel(X, r; init = nanmedian)
         @test numfactors(fm_median) == r
         @test !any(isnan, fm_median.X̄)
 
         # Test with custom init function (zero)
-        fm_zero = FactorModel(X, r; init=x -> zero(eltype(x)))
+        fm_zero = FactorModel(X, r; init = x -> zero(eltype(x)))
         @test numfactors(fm_zero) == r
         @test !any(isnan, fm_zero.X̄)
     end
@@ -305,8 +304,8 @@ using CSV, DataFrames
         X[1:3, 1:2] .= NaN
 
         # Test with different maxiter and tol
-        fm1 = FactorModel(X, r; maxiter=100, tol=1e-6)
-        fm2 = FactorModel(X, r; maxiter=2000, tol=1e-10)
+        fm1 = FactorModel(X, r; maxiter = 100, tol = 1e-6)
+        fm2 = FactorModel(X, r; maxiter = 2000, tol = 1e-10)
 
         @test numfactors(fm1) == r
         @test numfactors(fm2) == r
@@ -337,8 +336,8 @@ using CSV, DataFrames
         T, n, r = 100, 20, 3
         X = randn(T, n)
 
-        fm_em = FactorModel(X, r; method=:em, scale=true, tol=1e-10, maxiter=2000)
-        fm_ls = FactorModel(X, r; method=:ls, scale=true, tol=1e-10, maxiter=2000)
+        fm_em = FactorModel(X, r; method = :em, scale = true, tol = 1e-10, maxiter = 2000)
+        fm_ls = FactorModel(X, r; method = :ls, scale = true, tol = 1e-10, maxiter = 2000)
 
         # Eigenvalues should be approximately equal
         @test eigvals(fm_em) ≈ eigvals(fm_ls) rtol=0.1
@@ -371,13 +370,15 @@ using CSV, DataFrames
         # Introduce missing values in specific columns only (keep first r+2 columns complete for LS init)
         X_missing = copy(X_complete)
         # Only add missing values to columns 6 to n
-        for j in (r+3):n
+        for j in (r + 3):n
             missing_rows = randperm(T)[1:10]  # 10 missing values per column
             X_missing[missing_rows, j] .= NaN
         end
 
-        fm_em = FactorModel(X_missing, r; method=:em, scale=true, tol=1e-10, maxiter=2000)
-        fm_ls = FactorModel(X_missing, r; method=:ls, scale=true, tol=1e-10, maxiter=2000)
+        fm_em = FactorModel(
+            X_missing, r; method = :em, scale = true, tol = 1e-10, maxiter = 2000)
+        fm_ls = FactorModel(
+            X_missing, r; method = :ls, scale = true, tol = 1e-10, maxiter = 2000)
 
         # EM imputes missing values, LS does not (by design)
         @test !any(isnan, fm_em.X̄)
@@ -399,7 +400,7 @@ using CSV, DataFrames
         T, n, r = 100, 10, 3
         X = randn(T, n)
 
-        fm = FactorModel(X, r; method=:ls)
+        fm = FactorModel(X, r; method = :ls)
 
         @test numfactors(fm) == r
         @test size(factors(fm)) == (T, r)
@@ -420,17 +421,15 @@ using CSV, DataFrames
         @test lc.r == [1.0, 0.0]
 
         # Test matrix constructor
-        constraints_mat = [
-            1.0  1.0  0.0  0.0  1.0;  # series 1: 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
-            5.0  0.0  0.0  1.0  0.0;  # series 5: 0*λ₁ + 0*λ₂ + 1*λ₃ = 0
-        ]
+        constraints_mat = [1.0 1.0 0.0 0.0 1.0;  # series 1: 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
+                           5.0 0.0 0.0 1.0 0.0;]
         lc2 = LoadingConstraints(constraints_mat)
         @test lc2.series == [1, 5]
         @test lc2.R == [1.0 0.0 0.0; 0.0 0.0 1.0]
         @test lc2.r == [1.0, 0.0]
 
         # Test helper functions
-        c1 = normalize_loading(1, 1, 3; value=1.0)
+        c1 = normalize_loading(1, 1, 3; value = 1.0)
         @test c1.series == [1]
         @test c1.R == [1.0 0.0 0.0]
         @test c1.r == [1.0]
@@ -453,9 +452,9 @@ using CSV, DataFrames
         X = randn(T, n)
 
         # Constrain first series to have loading = 1.0 on first factor
-        c = normalize_loading(1, 1, r; value=1.0)
+        c = normalize_loading(1, 1, r; value = 1.0)
 
-        fm = FactorModel(X, r; constraints=c, scale=false)
+        fm = FactorModel(X, r; constraints = c, scale = false)
 
         # Check that constraint is satisfied
         Λ = loadings(fm)
@@ -474,7 +473,7 @@ using CSV, DataFrames
         # Constrain series 5 to have zero loading on factor 3
         c = zero_loading(5, 3, r)
 
-        fm = FactorModel(X, r; constraints=c, scale=false)
+        fm = FactorModel(X, r; constraints = c, scale = false)
 
         # Check that constraint is satisfied
         Λ = loadings(fm)
@@ -489,13 +488,13 @@ using CSV, DataFrames
         X = randn(T, n)
 
         # Multiple constraints
-        c1 = normalize_loading(1, 1, r; value=1.0)
+        c1 = normalize_loading(1, 1, r; value = 1.0)
         c2 = zero_loading(5, 3, r)
-        c3 = normalize_loading(10, 2, r; value=0.5)
+        c3 = normalize_loading(10, 2, r; value = 0.5)
 
         constraints = vcat(c1, vcat(c2, c3))
 
-        fm = FactorModel(X, r; constraints=constraints, scale=false)
+        fm = FactorModel(X, r; constraints = constraints, scale = false)
 
         # Check all constraints are satisfied
         Λ = loadings(fm)
@@ -511,7 +510,7 @@ using CSV, DataFrames
 
         # With constraints, method should auto-select :ls
         c = normalize_loading(1, 1, r)
-        fm = FactorModel(X, r; constraints=c)
+        fm = FactorModel(X, r; constraints = c)
 
         @test numfactors(fm) == r
         # Constraint should be satisfied
@@ -527,9 +526,9 @@ using CSV, DataFrames
         X[1:10, 1] .= NaN
         X[50:60, 5] .= NaN
 
-        c = normalize_loading(2, 1, r; value=1.0)  # Series 2 (not series 1 which has NaN)
+        c = normalize_loading(2, 1, r; value = 1.0)  # Series 2 (not series 1 which has NaN)
 
-        fm = FactorModel(X, r; constraints=c, scale=false)
+        fm = FactorModel(X, r; constraints = c, scale = false)
 
         # Constraint should be satisfied
         Λ = loadings(fm)
@@ -549,16 +548,16 @@ using CSV, DataFrames
         c = normalize_loading(1, 1, r)
 
         # PCA with missing data should error
-        @test_throws ArgumentError FactorModel(X_missing, r; method=:pca)
+        @test_throws ArgumentError FactorModel(X_missing, r; method = :pca)
 
         # PCA with constraints should error
-        @test_throws ArgumentError FactorModel(X, r; method=:pca, constraints=c)
+        @test_throws ArgumentError FactorModel(X, r; method = :pca, constraints = c)
 
         # EM with constraints should error
-        @test_throws ArgumentError FactorModel(X, r; method=:em, constraints=c)
+        @test_throws ArgumentError FactorModel(X, r; method = :em, constraints = c)
 
         # Invalid method should error
-        @test_throws ArgumentError FactorModel(X, r; method=:invalid)
+        @test_throws ArgumentError FactorModel(X, r; method = :invalid)
     end
 
     @testset "Constraint validation" begin
@@ -567,11 +566,11 @@ using CSV, DataFrames
 
         # Constraint referencing non-existent series
         c_bad_series = LoadingConstraints([100], [1.0 0.0 0.0], [1.0])
-        @test_throws ArgumentError FactorModel(X, r; constraints=c_bad_series)
+        @test_throws ArgumentError FactorModel(X, r; constraints = c_bad_series)
 
         # Constraint with wrong number of factors in R
         c_bad_r = LoadingConstraints([1], [1.0 0.0 0.0 0.0], [1.0])  # 4 cols but r=3
-        @test_throws ArgumentError FactorModel(X, r; constraints=c_bad_r)
+        @test_throws ArgumentError FactorModel(X, r; constraints = c_bad_r)
     end
 
     @testset "Estimation method types and accessor" begin
@@ -580,17 +579,17 @@ using CSV, DataFrames
         r = 3
 
         # Test PCA method type
-        fm_pca = FactorModel(X, r; method=:pca)
+        fm_pca = FactorModel(X, r; method = :pca)
         @test estimationmethod(fm_pca) isa PCA
         @test estimationmethod(fm_pca) == PCA()
 
         # Test EM method type
-        fm_em = FactorModel(X, r; method=:em)
+        fm_em = FactorModel(X, r; method = :em)
         @test estimationmethod(fm_em) isa EM
         @test estimationmethod(fm_em) == EM()
 
         # Test LeastSquares method type
-        fm_ls = FactorModel(X, r; method=:ls)
+        fm_ls = FactorModel(X, r; method = :ls)
         @test estimationmethod(fm_ls) isa LeastSquares
         @test estimationmethod(fm_ls) == LeastSquares()
 
@@ -606,7 +605,7 @@ using CSV, DataFrames
 
         # Test auto-selection: constraints -> LeastSquares
         c = normalize_loading(1, 1, r)
-        fm_auto_ls = FactorModel(X, r; constraints=c)
+        fm_auto_ls = FactorModel(X, r; constraints = c)
         @test estimationmethod(fm_auto_ls) isa LeastSquares
 
         # Test type hierarchy
@@ -621,21 +620,21 @@ using CSV, DataFrames
         r = 3
 
         # Test PCA output
-        fm_pca = FactorModel(X, r; method=:pca)
+        fm_pca = FactorModel(X, r; method = :pca)
         io = IOBuffer()
         show(io, fm_pca)
         output = String(take!(io))
         @test occursin("Principal Component Analysis", output)
 
         # Test EM output
-        fm_em = FactorModel(X, r; method=:em)
+        fm_em = FactorModel(X, r; method = :em)
         io = IOBuffer()
         show(io, fm_em)
         output = String(take!(io))
         @test occursin("EM Algorithm", output)
 
         # Test LS output
-        fm_ls = FactorModel(X, r; method=:ls)
+        fm_ls = FactorModel(X, r; method = :ls)
         io = IOBuffer()
         show(io, fm_ls)
         output = String(take!(io))
@@ -648,9 +647,9 @@ using CSV, DataFrames
         r = 3
 
         # Test that we can dispatch on the estimation method type
-        fm_pca = FactorModel(X, r; method=:pca)
-        fm_em = FactorModel(X, r; method=:em)
-        fm_ls = FactorModel(X, r; method=:ls)
+        fm_pca = FactorModel(X, r; method = :pca)
+        fm_em = FactorModel(X, r; method = :em)
+        fm_ls = FactorModel(X, r; method = :ls)
 
         # Define a test function that dispatches on method type
         test_dispatch(::FactorModel{PCA}) = :pca
@@ -664,3 +663,6 @@ using CSV, DataFrames
 
     include("test_sw.jl")
 end
+
+# Aqua.jl quality assurance tests
+include("Aqua.jl")
