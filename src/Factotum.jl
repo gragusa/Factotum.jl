@@ -70,7 +70,8 @@ struct EstimationStats{V <: AbstractVector}
     nobs::Int
 end
 
-struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix, V <: AbstractVector, S <: EstimationStats} <: AbstractFactorModel
+struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix,
+    V <: AbstractVector, S <: EstimationStats} <: AbstractFactorModel
     "The matrix of factors"
     factors::M
     "The matrix of loadings"
@@ -90,7 +91,8 @@ struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix, V <: Abst
     stats::S
 end
 
-struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVector, R} <: AbstractFactorModel
+struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVector, R} <:
+       AbstractFactorModel
     "The matrix of factors"
     factors::M
     "The matrix of loadings"
@@ -152,7 +154,7 @@ end
 function LoadingConstraints(constraints::Matrix)
     nc = size(constraints, 1)
     series = Int.(constraints[:, 1])
-    R = constraints[:, 2:end-1]
+    R = constraints[:, 2:(end - 1)]
     r = vec(constraints[:, end])
     LoadingConstraints(series, R, r)
 end
@@ -193,10 +195,13 @@ Create a constraint to set the loading of `series` on `factor` to zero.
 c = zero_loading(5, 3, 3)
 ```
 """
-zero_loading(series::Int, factor::Int, numfactors::Int) =
+function zero_loading(series::Int, factor::Int, numfactors::Int)
     normalize_loading(series, factor, numfactors; value = 0.0)
+end
 
-FactorModel(Z::AbstractMatrix{G}; kwargs...) where G = FactorModel(Z, size(Z,2); kwargs...)
+function FactorModel(Z::AbstractMatrix{G}; kwargs...) where {G}
+    FactorModel(Z, size(Z, 2); kwargs...)
+end
 
 """
     FactorModel(Z, numfactors; demean=true, scale=false, corrected=false,
@@ -248,15 +253,17 @@ estimationmethod(fm)  # returns LeastSquares()
 ```
 """
 function FactorModel(Z::AbstractMatrix{G}, numfactors;
-                     demean::Bool = true, scale::Bool = false, corrected::Bool = false,
-                     init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
-                     constraints::Union{Nothing, LoadingConstraints} = nothing,
-                     method::Symbol = :auto, nt_min::Int = 10,
-                     orthonormalize::Bool = true) where G
+        demean::Bool = true, scale::Bool = false, corrected::Bool = false,
+        init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
+        constraints::Union{Nothing, LoadingConstraints} = nothing,
+        method::Symbol = :auto, nt_min::Int = 10,
+        orthonormalize::Bool = true) where {G}
     T, n = size(Z)
     T == 0 && throw(ArgumentError("Input matrix must not be empty (got size $(size(Z)))"))
-    numfactors < 0 && throw(ArgumentError("numfactors must be non-negative (got $numfactors)"))
-    numfactors > n && throw(ArgumentError("numfactors ($numfactors) must not exceed number of columns ($n)"))
+    numfactors < 0 &&
+        throw(ArgumentError("numfactors must be non-negative (got $numfactors)"))
+    numfactors > n &&
+        throw(ArgumentError("numfactors ($numfactors) must not exceed number of columns ($n)"))
 
     # Auto-detect missing values
     has_missing = any(isnan, Z)
@@ -265,7 +272,8 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
     # Validate constraints
     if has_constraints
         max_series = maximum(constraints.series)
-        max_series > n && throw(ArgumentError("Constraint references series $max_series but data has only $n columns"))
+        max_series > n &&
+            throw(ArgumentError("Constraint references series $max_series but data has only $n columns"))
         size(constraints.R, 2) != numfactors && throw(ArgumentError(
             "Constraint R matrix has $(size(constraints.R, 2)) columns but numfactors=$numfactors"))
     end
@@ -285,34 +293,64 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
 
     # Validate method choice
     if actual_method == :pca
-        has_missing && throw(ArgumentError("PCA method cannot handle missing values. Use method=:em or method=:ls"))
-        has_constraints && throw(ArgumentError("PCA method does not support constraints. Use method=:ls"))
+        has_missing &&
+            throw(ArgumentError("PCA method cannot handle missing values. Use method=:em or method=:ls"))
+        has_constraints &&
+            throw(ArgumentError("PCA method does not support constraints. Use method=:ls"))
     elseif actual_method == :em
-        has_constraints && throw(ArgumentError("EM method does not support constraints. Use method=:ls"))
+        has_constraints &&
+            throw(ArgumentError("EM method does not support constraints. Use method=:ls"))
     end
 
     # Estimate and construct with appropriate type parameter
     if actual_method == :pca
-        (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_pca(Z, numfactors;
+        (F,
+            Λ,
+            λ,
+            ε,
+            μ,
+            σₓ,
+            Z,
+            X,
+            stats) = extract_pca(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected)
-        FactorModel{PCA, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
+        FactorModel{PCA, typeof(F), typeof(λ), typeof(stats)}(
+            F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     elseif actual_method == :em
-        (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_em(Z, numfactors;
+        (F,
+            Λ,
+            λ,
+            ε,
+            μ,
+            σₓ,
+            Z,
+            X,
+            stats) = extract_em(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected,
             init = init, maxiter = maxiter, tol = tol)
         FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     elseif actual_method == :ls
-        (F, Λ, λ, ε, μ, σₓ, Z, X, stats) = extract_ls(Z, numfactors;
+        (F,
+            Λ,
+            λ,
+            ε,
+            μ,
+            σₓ,
+            Z,
+            X,
+            stats) = extract_ls(Z, numfactors;
             constraints = constraints, demean = demean, scale = scale,
             nt_min = nt_min, tol = tol, maxiter = maxiter,
             orthonormalize = orthonormalize)
-        FactorModel{LeastSquares, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
+        FactorModel{LeastSquares, typeof(F), typeof(λ), typeof(stats)}(
+            F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     else
         throw(ArgumentError("Unknown method: $method. Use :auto, :pca, :em, or :ls"))
     end
 end
 
-function extract_pca(Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
+function extract_pca(
+        Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
     T, n = size(Z)
     μ = demean ? mean(Z; dims = 1) : zeros(1, n)
     σₓ = scale ? std(Z; dims = 1, corrected = corrected) : ones(1, n)
@@ -342,7 +380,7 @@ function _pca(X, numfactors)
     T, n = size(X)
     if T > n
         # X'X eigendecomposition
-        ev = eigen(Symmetric(X' * X), n - numfactors + 1:n)
+        ev = eigen(Symmetric(X' * X), (n - numfactors + 1):n)
         neg = findall(x -> x < 0, ev.values)
         if !isempty(neg)
             if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
@@ -358,7 +396,7 @@ function _pca(X, numfactors)
         F = X * Λ
     else
         # XX' eigendecomposition
-        ev = eigen(Symmetric(X * X'), T - numfactors + 1:T)
+        ev = eigen(Symmetric(X * X'), (T - numfactors + 1):T)
         neg = findall(x -> x < 0, ev.values)
         if !isempty(neg)
             if any(ev.values[neg] .< -9 * eps(Float64) * first(ev.values))
@@ -383,8 +421,6 @@ function _pca(X, numfactors)
     end
     (F, Λ, λ)
 end
-
-
 
 ## ------------------------------------------------------------
 ## EM algorithm for missing data
@@ -414,8 +450,8 @@ The EM algorithm alternates between:
 Same tuple as extract_ΛΛ/extract_FF: (F, Λ, λ, ε, μ, σₓ, Z, X)
 """
 function extract_em(Z, numfactors;
-                    demean::Bool = true, scale::Bool = false, corrected::Bool = false,
-                    init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8)
+        demean::Bool = true, scale::Bool = false, corrected::Bool = false,
+        init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8)
     T, n = size(Z)
 
     # 1. Identify missing values
@@ -450,11 +486,11 @@ function extract_em(Z, numfactors;
 
             # E-step: Impute missing values
             max_change = zero(eltype(X))
-            
+
             for idx in missing_indices
                 i, j = idx[1], idx[2]
                 pred = dot(view(F, i, :), view(Λ, j, :))
-                
+
                 change = abs(pred - X[idx])
                 max_change = max(max_change, change)
                 X[idx] = pred
@@ -529,10 +565,10 @@ This implementation matches the MATLAB factor_estimation_ls function:
 - Computes R² for each series by re-regressing on final factors
 """
 function extract_ls(Z, numfactors;
-                    constraints::Union{Nothing, LoadingConstraints} = nothing,
-                    demean::Bool = true, scale::Bool = false,
-                    nt_min::Int = 10, tol::Float64 = 1e-8, maxiter::Int = 1000,
-                    orthonormalize::Bool = true)
+        constraints::Union{Nothing, LoadingConstraints} = nothing,
+        demean::Bool = true, scale::Bool = false,
+        nt_min::Int = 10, tol::Float64 = 1e-8, maxiter::Int = 1000,
+        orthonormalize::Bool = true)
     T, n = size(Z)
 
     # Standardize using available data (MATLAB uses population std)
@@ -567,7 +603,7 @@ function extract_ls(Z, numfactors;
 
     # Initialize factors via PCA on balanced panel (columns with no missing data)
     # MATLAB: xbal = packr(xdata_std')' removes columns with NaN
-    balanced_mask = vec(.!any(isnan.(X), dims=1))
+    balanced_mask = vec(.!any(isnan.(X), dims = 1))
     n_complete = sum(balanced_mask)
 
     if n_complete >= numfactors
@@ -722,7 +758,7 @@ function extract_ls(Z, numfactors;
         F_orth = F * Matrix(qrΛ.R)'  # T × r
 
         # Eigenvalues from orthonormalized factor variances
-        λ = vec(var(F_orth, dims=1, corrected=false))
+        λ = vec(var(F_orth, dims = 1, corrected = false))
 
         # Store orthonormal loadings (same convention as PCA/EM)
         # loadings(fm; original_units=true) will return Λ .* σₓ
@@ -734,7 +770,7 @@ function extract_ls(Z, numfactors;
         # With constraints: keep raw LS solution to preserve constraints
         # Note: Information criteria may not work correctly with constrained LS
         F_orth = F
-        λ = vec(var(F, dims=1, corrected=false))
+        λ = vec(var(F, dims = 1, corrected = false))
         Λ_final = Λ  # Store standardized loadings (preserves constraints)
         ε = X_imputed .- F * Λ'
     end
@@ -743,15 +779,16 @@ function extract_ls(Z, numfactors;
     (F_orth, Λ_final, λ, ε, μ, σₓ, Z, X_imputed, stats)
 end
 
-
 function Base.view(fm::FactorModel, k::Int)
-    k <= 0 && throw(ArgumentError("Cannot view a FactorModel with $k factors (must be positive)"))
+    k <= 0 &&
+        throw(ArgumentError("Cannot view a FactorModel with $k factors (must be positive)"))
     view(fm, 1:k)
 end
 
 function Base.view(fm::FactorModel, rnge::UnitRange)
     isempty(rnge) && throw(ArgumentError("Range must not be empty"))
-    first(rnge) <= 0 && throw(ArgumentError("Range must start at 1 or greater (got $(first(rnge)))"))
+    first(rnge) <= 0 &&
+        throw(ArgumentError("Range must start at 1 or greater (got $(first(rnge)))"))
     maximum(rnge) > numfactors(fm) && throw(ArgumentError(
         "Cannot create FactorModel view with $(maximum(rnge)) factors when parent has $(numfactors(fm)) factors"))
     FactorModelView(view(factors(fm), :, rnge), view(loadings(fm), :, rnge),
@@ -1000,9 +1037,9 @@ struct BIC1 <: AbstractInformationCriterion end
 struct BIC2 <: AbstractInformationCriterion end
 struct BIC3 <: AbstractInformationCriterion end
 
-struct InformationCriterion{M <: AbstractInformationCriterion, T<:AbstractFloat}
+struct InformationCriterion{M <: AbstractInformationCriterion, T <: AbstractFloat}
     criterion::M
-    crit::Array{T,1}
+    crit::Array{T, 1}
     rnge::UnitRange{Int64}
 end
 
@@ -1013,23 +1050,27 @@ function V(fmv::FactorModelView)
     NaNStatistics.nansum(abs2.(ε)) / count(!isnan, ε)
 end
 
-V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j ∈ 1:kₘₐₓ]    
+V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j in 1:kₘₐₓ]
 
-variance_factor(::Type{M}, fm, kₘₐₓ) where M <: Union{IC1, IC2, IC3} = 1.0
-variance_factor(::Type{M}, fm, kₘₐₓ) where M <: AbstractInformationCriterion = V(view(fm, kₘₐₓ)) ## This is probably transform
-transform_V(::Type{M}, V) where M <: Union{IC1, IC2, IC3} = log.(V)
-transform_V(::Type{M}, V) where M <: AbstractInformationCriterion = V
+variance_factor(::Type{M}, fm, kₘₐₓ) where {M <: Union{IC1, IC2, IC3}} = 1.0
+function variance_factor(::Type{M}, fm, kₘₐₓ) where {M <: AbstractInformationCriterion}
+    V(view(fm, kₘₐₓ))
+end ## This is probably transform
+transform_V(::Type{M}, V) where {M <: Union{IC1, IC2, IC3}} = log.(V)
+transform_V(::Type{M}, V) where {M <: AbstractInformationCriterion} = V
 
-function informationcriterion(s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where M <: AbstractInformationCriterion
+function informationcriterion(
+        s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where {M <: AbstractInformationCriterion}
     kₘₐₓ <= 0 && throw(ArgumentError("kₘₐₓ must be positive (got $kₘₐₓ)"))
-    kₘₐₓ > numfactors(fm) && throw(ArgumentError("kₘₐₓ ($kₘₐₓ) exceeds number of factors in model ($(numfactors(fm)))"))
+    kₘₐₓ > numfactors(fm) &&
+        throw(ArgumentError("kₘₐₓ ($kₘₐₓ) exceeds number of factors in model ($(numfactors(fm)))"))
     T, n = size(fm)
     rnge = 1:kₘₐₓ
-    σ̂²  = variance_factor(s, fm, kₘₐₓ)
+    σ̂² = variance_factor(s, fm, kₘₐₓ)
     VV = [NaNStatistics.nansum(abs2.(fm.X̄)) / count(!isnan, fm.X̄); V(fm, kₘₐₓ)]
     Vₖ = transform_V.(s, VV)
     gₜₙ = map(k -> k*penalty(s, T, n, k), 0:last(rnge))
-    InformationCriterion(M(), Vₖ + σ̂².*gₜₙ, 0:last(rnge))
+    InformationCriterion(M(), Vₖ + σ̂² .* gₜₙ, 0:last(rnge))
 end
 
 function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
@@ -1037,15 +1078,20 @@ function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
     map(x->x(fm, kₘₐₓ), criterion)
 end
 
-(for criterion ∈ (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
-    eval(quote 
-    ($criterion)(fm, kₘₐₓ::Int64) = Factotum.informationcriterion($criterion, fm, kₘₐₓ)
-    Base.string(ic::($criterion)) = string(($criterion))
-    ($criterion)(X::Matrix, kₘₐₓ::Int64; kwargs...) = Factotum.informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
+(for criterion in
+     (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
+    eval(quote
+        function ($criterion)(fm, kₘₐₓ::Int64)
+            Factotum.informationcriterion($criterion, fm, kₘₐₓ)
+        end
+        Base.string(ic::($criterion)) = string(($criterion))
+        function ($criterion)(X::Matrix, kₘₐₓ::Int64; kwargs...)
+            Factotum.informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
+        end
     end)
 end)
 
-function Base.findmin(ic::InformationCriterion) 
+function Base.findmin(ic::InformationCriterion)
     fmin = findmin(ic.crit)
     NamedTuple{(Symbol(string(ic.criterion)), :r)}(fmin)
 end
@@ -1054,11 +1100,11 @@ function Base.findmin(ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
     fmin = map(x->findmin(x.crit), ic)
     nm = map(x->(Symbol(x.criterion), :r), ic)
     TT = map(x->eltype(x.crit), ic)
-    map((nm,x, T) -> NamedTuple{nm}(x), nm, fmin, TT)
+    map((nm, x, T) -> NamedTuple{nm}(x), nm, fmin, TT)
 end
 
 numfactors(ic::InformationCriterion) = findmin(ic).r
-Base.string(ic::InformationCriterion{T, F}) where {T, F}  = string(T)
+Base.string(ic::InformationCriterion{T, F}) where {T, F} = string(T)
 
 """
     criterion(ic::InformationCriterion)
@@ -1075,35 +1121,38 @@ values = criterion(ic1)  # Vector of 11 values (for r = 0, 1, ..., 10)
 """
 criterion(ic::InformationCriterion) = ic.crit
 
-function Base.show(io::IO, ic::T) where T <: InformationCriterion
+function Base.show(io::IO, ic::T) where {T <: InformationCriterion}
     column_labels = ["# of factors", "Criterion"]
     highlight1 = TextHighlighter((data, i, j) -> data[i, 2] == minimum(data[:, 2]),
-                                  Crayon(background = :blue, foreground = :white, bold = true))
+        Crayon(background = :blue, foreground = :white, bold = true))
     highlight2 = TextHighlighter((data, i, j) -> j == 2, Crayon(foreground = :light_blue))
     highlight3 = TextHighlighter((data, i, j) -> j == 1, Crayon(foreground = :light_red, bold = true))
     style = TextTableStyle(first_line_column_label = crayon"yellow bold")
     pretty_table(io, [ic.rnge ic.crit];
-                 column_labels = [column_labels],
-                 style = style,
-                 formatters = [fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", [2])],
-                 highlighters = [highlight1, highlight2, highlight3])
+        column_labels = [column_labels],
+        style = style,
+        formatters = [fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", [2])],
+        highlighters = [highlight1, highlight2, highlight3])
 end
 
-function Base.show(io::IO, ic::Tuple{InformationCriterion, Vararg{InformationCriterion, N}}) where {N}
+function Base.show(io::IO, ic::Tuple{
+        InformationCriterion, Vararg{InformationCriterion, N}}) where {N}
     column_labels = ["# of factors", string.(ic)...]
-    highlights = [TextHighlighter((data, i, j) -> data[i, j] == minimum(data[:, x]) && j > 1,
-                                   Crayon(background = :blue, foreground = :white, bold = true))
-                  for x in 2:length(ic)+1]
+    highlights = [TextHighlighter(
+                      (data, i, j) -> data[i, j] == minimum(data[:, x]) && j > 1,
+                      Crayon(background = :blue, foreground = :white, bold = true))
+                  for x in 2:(length(ic) + 1)]
     tbl = [first(ic).rnge mapreduce(x -> x.crit, hcat, ic)]
     style = TextTableStyle(first_line_column_label = crayon"yellow bold")
     pretty_table(io, tbl;
-                 column_labels = [column_labels],
-                 style = style,
-                 formatters = [fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", collect(2:length(ic)+1))],
-                 highlighters = highlights)
+        column_labels = [column_labels],
+        style = style,
+        formatters = [
+            fmt__printf("%5.0f", [1]), fmt__printf("%5.3g", collect(2:(length(ic) + 1)))],
+        highlighters = highlights)
 end
 
-function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
+function penalty(s::Type{P}, T, N) where {P <: Union{IC1, PCp1}}
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -1111,8 +1160,8 @@ function penalty(s::Type{P}, T, N) where P <: Union{IC1, PCp1}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N) where P <: Union{IC2, PCp2}
-    C2  = min(T, N)
+function penalty(s::Type{P}, T, N) where {P <: Union{IC2, PCp2}}
+    C2 = min(T, N)
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -1120,12 +1169,12 @@ function penalty(s::Type{P}, T, N) where P <: Union{IC2, PCp2}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N) where P <: Union{IC3, PCp3}
-    C2  = min(T, N)
+function penalty(s::Type{P}, T, N) where {P <: Union{IC3, PCp3}}
+    C2 = min(T, N)
     log(C2)/C2
 end
 
-penalty(s::Type{S}, T, N, k) where S = penalty(s, T, N)
+penalty(s::Type{S}, T, N, k) where {S} = penalty(s, T, N)
 
 penalty(s::Type{AIC1}, T, N) = 2/T
 penalty(s::Type{AIC2}, T, N) = 2/N
@@ -1232,15 +1281,15 @@ penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
 export FactorModel, EstimationStats, describe,
        numfactors, factors, loadings, explained_variance,
-       # Estimation method types and accessor
+# Estimation method types and accessor
        AbstractEstimationMethod, PCA, EM, LeastSquares, estimationmethod,
-       # Estimation statistics
+# Estimation statistics
        stats, tss, ssr, r2, nobs,
-       # Information criteria
+# Information criteria
        IC1, IC2, IC3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3,
        informationcriteria, criterion,
-       # Constrained factor estimation
+# Constrained factor estimation
        LoadingConstraints, normalize_loading, zero_loading
 
 end # module"
