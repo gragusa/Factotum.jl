@@ -2,7 +2,7 @@ name: Auto-format (pushes in repo)
 
 on:
   push:
-    branches: ["**"] # or ['main', 'develop', 'feature/**']
+    branches: ["**"] # or ['master', 'develop', 'feature/**']
 
 permissions:
   contents: write
