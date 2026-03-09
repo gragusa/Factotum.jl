@@ -1450,7 +1450,7 @@ function describe(io::IO, fm::FactorModel{E}) where {E}
         column_labels = ["Std. Dev.", "Prop. Variance", "Cumul. Variance"],
         formatters = [fmt],
         highlighters = [hl],
-        alignment = [:r, :r, :r],
+        alignment = [:r, :r, :r]
     )
 end
 

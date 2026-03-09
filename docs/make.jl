@@ -1,7 +1,7 @@
 using Documenter
 using Factotum
 
-DocMeta.setdocmeta!(Factotum, :DocTestSetup, :(using Factotum, LinearAlgebra); recursive=true)
+DocMeta.setdocmeta!(Factotum, :DocTestSetup, :(using Factotum, LinearAlgebra); recursive = true)
 
 makedocs(
     sitename = "Factotum.jl",
