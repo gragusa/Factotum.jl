@@ -178,9 +178,9 @@ See also: [`normalize_loading`](@ref), [`zero_loading`](@ref)
 Using helper functions (recommended):
 
 ```jldoctest
-julia> c1 = normalize_loading(1, 1, 3; value=1.0);  # λ₁₁ = 1
+julia> c1 = normalize_loading(1, 1; value=1.0);  # λ₁₁ = 1
 
-julia> c2 = zero_loading(5, 2, 3);  # λ₅₂ = 0
+julia> c2 = zero_loading(5, 2);  # λ₅₂ = 0
 
 julia> c = vcat(c1, c2);  # combine constraints
 
@@ -220,10 +220,24 @@ function LoadingConstraints(constraints::Matrix)
     LoadingConstraints(series, R, r)
 end
 
+"""
+    _widen_R(R::Matrix{Float64}, numfactors::Int) -> Matrix{Float64}
+
+Pad columns of `R` with zeros so that it has `numfactors` columns.
+"""
+function _widen_R(R::Matrix{Float64}, numfactors::Int)
+    ncols = size(R, 2)
+    ncols == numfactors && return R
+    ncols > numfactors &&
+        throw(ArgumentError("R has $ncols columns but numfactors=$numfactors"))
+    hcat(R, zeros(size(R, 1), numfactors - ncols))
+end
+
 function Base.vcat(c1::LoadingConstraints, c2::LoadingConstraints)
+    ncols = max(size(c1.R, 2), size(c2.R, 2))
     LoadingConstraints(
         vcat(c1.series, c2.series),
-        vcat(c1.R, c2.R),
+        vcat(_widen_R(c1.R, ncols), _widen_R(c2.R, ncols)),
         vcat(c1.r, c2.r)
     )
 end
@@ -233,7 +247,7 @@ function Base.vcat(c1::LoadingConstraints, c2::LoadingConstraints, cs::LoadingCo
 end
 
 """
-    normalize_loading(series, factor, numfactors; value=1.0)
+    normalize_loading(series, factor; value=1.0)
 
 Constrain loading of `series` on `factor` to equal `value`.
 
@@ -242,11 +256,11 @@ Common use: sign normalization by setting a reference loading to 1.0.
 # Examples
 
 ```jldoctest
-julia> c = normalize_loading(1, 1, 3; value=1.0);
+julia> c = normalize_loading(1, 1; value=1.0);
 
 julia> c.R
-1×3 Matrix{Float64}:
- 1.0  0.0  0.0
+1×1 Matrix{Float64}:
+ 1.0
 
 julia> c.r
 1-element Vector{Float64}:
@@ -258,7 +272,7 @@ Apply to estimation:
 ```jldoctest
 julia> X = randn(100, 10);
 
-julia> c = normalize_loading(1, 1, 3; value=1.0);
+julia> c = normalize_loading(1, 1; value=1.0);
 
 julia> fm = FactorModel(X, 3; constraints=c);
 
@@ -268,14 +282,14 @@ julia> round(loadings(fm)[1, 1], digits=6)
 
 See also: [`zero_loading`](@ref), [`LoadingConstraints`](@ref)
 """
-function normalize_loading(series::Int, factor::Int, numfactors::Int; value::Float64 = 1.0)
-    R = zeros(1, numfactors)
+function normalize_loading(series::Int, factor::Int; value::Float64 = 1.0)
+    R = zeros(1, factor)
     R[1, factor] = 1.0
     LoadingConstraints([series], R, [value])
 end
 
 """
-    zero_loading(series, factor, numfactors)
+    zero_loading(series, factor)
 
 Constrain loading of `series` on `factor` to zero.
 
@@ -284,15 +298,15 @@ Use for excluding a variable from loading on a specific factor.
 # Examples
 
 ```jldoctest
-julia> c = zero_loading(5, 2, 3);
+julia> c = zero_loading(5, 2);
 
 julia> c.series
 1-element Vector{Int64}:
  5
 
 julia> c.R
-1×3 Matrix{Float64}:
- 0.0  1.0  0.0
+1×2 Matrix{Float64}:
+ 0.0  1.0
 
 julia> c.r
 1-element Vector{Float64}:
@@ -304,7 +318,7 @@ Apply to estimation:
 ```jldoctest
 julia> X = randn(100, 10);
 
-julia> c = zero_loading(3, 2, 3);
+julia> c = zero_loading(3, 2);
 
 julia> fm = FactorModel(X, 3; constraints=c);
 
@@ -314,22 +328,23 @@ true
 
 See also: [`normalize_loading`](@ref), [`LoadingConstraints`](@ref)
 """
-function zero_loading(series::Int, factor::Int, numfactors::Int)
-    normalize_loading(series, factor, numfactors; value = 0.0)
+function zero_loading(series::Int, factor::Int)
+    normalize_loading(series, factor; value = 0.0)
 end
 
 """
-    fix_loading(series, values, numfactors)
+    fix_loading(series, values)
 
 Fix the entire loading vector of `series` to `values`.
 
-Creates `numfactors` constraints, one per entry: λ_{series,k} = values[k]
-for k = 1, …, numfactors.
+The number of factors is inferred from `length(values)`.
+Creates one constraint per entry: λ_{series,k} = values[k]
+for k = 1, …, length(values).
 
 # Examples
 
 ```jldoctest
-julia> c = fix_loading(4, [0, 0, 1, 0, 0, 0], 6);
+julia> c = fix_loading(4, [0, 0, 1, 0, 0, 0]);
 
 julia> length(c.series)
 6
@@ -346,28 +361,26 @@ julia> c.r
 
 See also: [`normalize_loading`](@ref), [`zero_loading`](@ref), [`identity_loading`](@ref)
 """
-function fix_loading(series::Int, values::AbstractVector, numfactors::Int)
-    length(values) == numfactors ||
-        throw(DimensionMismatch("length(values) = $(length(values)) but numfactors = $numfactors"))
+function fix_loading(series::Int, values::AbstractVector)
+    numfactors = length(values)
     R = Matrix{Float64}(I, numfactors, numfactors)
     LoadingConstraints(fill(series, numfactors), R, Float64.(values))
 end
 
 """
-    identity_loading(named_series, numfactors)
+    identity_loading(named_series)
 
-Apply the named-factor (identity) normalization: for each k = 1, …, numfactors,
-fix the loading of `named_series[k]` to the k-th standard basis vector eₖ.
+Apply the named-factor (identity) normalization: for each k = 1, …, r,
+fix the loading of `named_series[k]` to the k-th standard basis vector eₖ,
+where r = length(named_series).
 
 This imposes r² restrictions (r unit entries on the diagonal, r²-r zeros off
 the diagonal), exactly resolving the rotational indeterminacy of the factor model.
 
-`named_series` must have length equal to `numfactors`.
-
 # Examples
 
 ```jldoctest
-julia> c = identity_loading([1, 2, 3], 3);
+julia> c = identity_loading([1, 2, 3]);
 
 julia> length(c.series)
 9
@@ -387,13 +400,12 @@ julia> c.r
 
 See also: [`fix_loading`](@ref), [`normalize_loading`](@ref)
 """
-function identity_loading(named_series::AbstractVector{<:Integer}, numfactors::Int)
-    length(named_series) == numfactors ||
-        throw(DimensionMismatch("length(named_series) = $(length(named_series)) but numfactors = $numfactors"))
-    constraints = fix_loading(named_series[1], Float64.(I(numfactors)[:, 1]), numfactors)
+function identity_loading(named_series::AbstractVector{<:Integer})
+    numfactors = length(named_series)
+    constraints = fix_loading(named_series[1], Float64.(I(numfactors)[:, 1]))
     for k in 2:numfactors
         constraints = vcat(constraints,
-            fix_loading(named_series[k], Float64.(I(numfactors)[:, k]), numfactors))
+            fix_loading(named_series[k], Float64.(I(numfactors)[:, k])))
     end
     constraints
 end
@@ -472,7 +484,7 @@ With loading constraints:
 ```jldoctest
 julia> X = randn(100, 10);
 
-julia> c = normalize_loading(1, 1, 3; value=1.0);
+julia> c = normalize_loading(1, 1; value=1.0);
 
 julia> fm = FactorModel(X, 3; constraints=c);
 
@@ -514,8 +526,13 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
         max_series = maximum(constraints.series)
         max_series > n &&
             throw(ArgumentError("Constraint references series $max_series but data has only $n columns"))
-        size(constraints.R, 2) != numfactors && throw(ArgumentError(
-            "Constraint R matrix has $(size(constraints.R, 2)) columns but numfactors=$numfactors"))
+        if size(constraints.R, 2) < numfactors
+            constraints = LoadingConstraints(constraints.series,
+                _widen_R(constraints.R, numfactors), constraints.r)
+        elseif size(constraints.R, 2) > numfactors
+            throw(ArgumentError(
+                "Constraint R matrix has $(size(constraints.R, 2)) columns but numfactors=$numfactors"))
+        end
     end
 
     # Determine method
@@ -1369,21 +1386,20 @@ estimationmethod(::FactorModel{E}) where {E} = E()
 ## Output
 
 # Helper functions for method names
-_method_name(::Type{PCA}) = "Principal Component Analysis"
-_method_name(::Type{EM}) = "EM Algorithm"
-_method_name(::Type{LeastSquares}) = "Iterative Least Squares"
+_method_name(::Type{PCA}) = "PCA"
+_method_name(::Type{EM}) = "EM"
+_method_name(::Type{LeastSquares}) = "LS"
 
 function Base.show(io::IO, fm::FactorModel{E}) where {E}
-    printstyled(io, "\nStatic Factor Model\n", color = :green)
-    @printf io "Dimensions of X..........: %s\n" size(fm)
-    @printf io "Number of factors........: %s\n" numfactors(fm)
-    @printf io "Estimation method........: %s\n" _method_name(E)
+    T, n = size(fm)
+    r = numfactors(fm)
+    print(io, "FactorModel{$(_method_name(E))} with $r factor$(r == 1 ? "" : "s") ($T × $n)")
 end
 
 function Base.show(io::IO, fmv::FactorModelView)
-    printstyled(io, "\nStatic Factor Model (View)\n", color = :green)
-    @printf io "Dimensions of X..........: %s\n" size(fmv.X̄)
-    @printf io "Number of factors........: %s\n" numfactors(fmv)
+    T, n = size(fmv.X̄)
+    r = numfactors(fmv)
+    print(io, "FactorModelView with $r factor$(r == 1 ? "" : "s") ($T × $n)")
 end
 
 """
@@ -1393,6 +1409,7 @@ end
 Print a detailed summary of the factor model, including:
 - Model dimensions (T × n)
 - Number of factors
+- Estimation method
 - Factor importance table with standard deviations, proportion of variance,
   and cumulative proportion
 
@@ -1404,23 +1421,37 @@ describe(fm)
 """
 describe(fm::FactorModel) = describe(stdout, fm)
 
-function describe(io::IO, fm::FactorModel)
-    show(io, fm)
-    printstyled(io, "Factors' importance:\n", color = :green)
-    factortable(io, fm)
-end
-
-function factortable(io::IO, fm::FactorModel)
+function describe(io::IO, fm::FactorModel{E}) where {E}
+    T, n = size(fm)
     k = numfactors(fm)
-    explainedvar = explained_variance(fm)
-    colnms = "Factor_" .* string.(1:k)
-    rownms = ["Standard deviation", "Proportion of Variance", "Cumulative Proportion"]
-    mat = Matrix{Float64}(undef, 3, k)
-    mat[1, :] .= sdev(fm)
-    mat[2, :] .= explainedvar
-    cumsum!(view(mat, 3, :), explainedvar)
-    ct = CoefTable(mat, colnms, rownms)
-    show(io, ct)
+    ev = explained_variance(fm)
+    cumev = cumsum(ev)
+    sd = sdev(fm)
+
+    # Build the data matrix: rows = factors, columns = Std. Dev, Prop. Variance (%), Cumulative (%)
+    mat = hcat(sd, 100.0 .* ev, 100.0 .* cumev)
+
+    # Row labels
+    row_labels = ["Factor $i" for i in 1:k]
+
+    # Highlighter: bold the cumulative column when it reaches ≥ 90%
+    hl = TextHighlighter(
+        (data, i, j) -> j == 3 && data[i, 3] >= 90.0,
+        crayon"bold"
+    )
+
+    # Format: 4 decimals for std dev, 2 decimals + % for variance columns
+    fmt = (v, i, j) -> j == 1 ? @sprintf("%.4f", v) : @sprintf("%.2f%%", v)
+
+    pretty_table(io, mat;
+        title = "Static Factor Model",
+        subtitle = "Dimensions: $T × $n  ⋅  Factors: $k  ⋅  Method: $(_method_name(E))",
+        row_labels = row_labels,
+        column_labels = ["Std. Dev.", "Prop. Variance", "Cumul. Variance"],
+        formatters = [fmt],
+        highlighters = [hl],
+        alignment = [:r, :r, :r],
+    )
 end
 
 ## ------------------------------------------------------------
@@ -1653,7 +1684,7 @@ julia> r_opt >= 0 && r_opt <= 5
 true
 ```
 
-See also: [`numfactors`](@ref), [`findmin`](@ref)
+See also: [`numfactors`](@ref), `findmin`
 """
 criterion(ic::InformationCriterion) = ic.crit
 

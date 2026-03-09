@@ -70,6 +70,7 @@ factors
 loadings
 numfactors
 explained_variance
+sdev
 ```
 
 ### Display
@@ -78,9 +79,16 @@ explained_variance
 describe
 ```
 
-## Information Criteria
+### R² Statistics
 
-### Criterion Types
+```@docs
+TotalR2
+ByFactorR2
+total_r2
+byfactor_r2
+```
+
+## Information Criteria
 
 Factotum.jl provides 12 information criteria for model selection:
 
@@ -118,9 +126,27 @@ for result in findmin(criteria)
 end
 ```
 
+### Criterion Types
+
+```@docs
+IC1
+IC2
+IC3
+PCp1
+PCp2
+PCp3
+AIC1
+AIC2
+AIC3
+BIC1
+BIC2
+BIC3
+```
+
 ### Criterion Functions
 
 ```@docs
+informationcriteria
 criterion
 ```
 
@@ -207,7 +233,22 @@ The `:ls` method supports linear constraints on factor loadings for identificati
 LoadingConstraints
 normalize_loading
 zero_loading
+fix_loading
+identity_loading
 ```
+
+### Normalization Behavior
+
+The default normalization is ``\Lambda'\Lambda = I`` (orthonormal loadings), which is enforced by PCA
+and by the LS method when no constraints are provided (via QR decomposition after convergence).
+
+When constraints are supplied, orthonormalization is **disabled** to preserve the constraint structure.
+This means:
+
+- **Sign normalization only** (e.g., `normalize_loading`): factors and loadings are the raw LS output.
+  Loadings are *not* orthonormal and factors are *not* orthogonal.
+- **Identity normalization** (`identity_loading`): imposes ``r^2`` constraints that fully resolve
+  rotational indeterminacy. The loading submatrix for the named series equals ``I_r``.
 
 ### Creating Constraints
 
@@ -215,10 +256,16 @@ zero_loading
 using Factotum
 
 # Fix loading of series 1 on factor 1 to 1.0 (sign normalization)
-c1 = normalize_loading(1, 1, 3; value=1.0)
+c1 = normalize_loading(1, 1; value=1.0)
 
 # Set loading of series 5 on factor 2 to zero
-c2 = zero_loading(5, 2, 3)
+c2 = zero_loading(5, 2)
+
+# Fix the entire loading vector of series 4
+c3 = fix_loading(4, [0.0, 0.0, 1.0])
+
+# Identity normalization: series 1, 2, 3 define factors 1, 2, 3
+c_id = identity_loading([1, 2, 3])
 
 # Combine constraints
 constraints = vcat(c1, c2)
@@ -232,7 +279,7 @@ Random.seed!(42)
 X = randn(100, 20)
 
 # Fit constrained model
-c = normalize_loading(1, 1, 3; value=1.0)
+c = normalize_loading(1, 1; value=1.0)
 fm = FactorModel(X, 3; constraints=c, scale=true)
 
 # Verify constraint is satisfied

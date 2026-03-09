@@ -181,18 +181,20 @@ import Factotum: Tables
         X = randn(50, 10)
         fm = FactorModel(X, 3)
 
-        # Test that show doesn't error
+        # Test that show doesn't error and has key info
         io = IOBuffer()
         show(io, fm)
         output = String(take!(io))
-        @test occursin("Static Factor Model", output)
-        @test occursin("Number of factors", output)
+        @test occursin("FactorModel", output)
+        @test occursin("3 factors", output)
 
-        # Test that describe doesn't error
+        # Test that describe doesn't error and produces a table
         io = IOBuffer()
         Factotum.describe(io, fm)
         output = String(take!(io))
         @test occursin("Static Factor Model", output)
+        @test occursin("Std. Dev.", output)
+        @test occursin("Prop. Variance", output)
     end
 
     @testset "Criterion from matrix directly" begin
@@ -430,20 +432,21 @@ import Factotum: Tables
         @test lc2.r == [1.0, 0.0]
 
         # Test helper functions
-        c1 = normalize_loading(1, 1, 3; value = 1.0)
+        c1 = normalize_loading(1, 1; value = 1.0)
         @test c1.series == [1]
-        @test c1.R == [1.0 0.0 0.0]
+        @test c1.R == reshape([1.0], 1, 1)
         @test c1.r == [1.0]
 
-        c2 = zero_loading(5, 3, 3)
+        c2 = zero_loading(5, 3)
         @test c2.series == [5]
         @test c2.R == [0.0 0.0 1.0]
         @test c2.r == [0.0]
 
-        # Test vcat
+        # Test vcat widens R to the max width
         c_combined = vcat(c1, c2)
         @test c_combined.series == [1, 5]
         @test size(c_combined.R) == (2, 3)
+        @test c_combined.R == [1.0 0.0 0.0; 0.0 0.0 1.0]
         @test c_combined.r == [1.0, 0.0]
     end
 
@@ -453,7 +456,7 @@ import Factotum: Tables
         X = randn(T, n)
 
         # Constrain first series to have loading = 1.0 on first factor
-        c = normalize_loading(1, 1, r; value = 1.0)
+        c = normalize_loading(1, 1; value = 1.0)
 
         fm = FactorModel(X, r; constraints = c, scale = false)
 
@@ -472,7 +475,7 @@ import Factotum: Tables
         X = randn(T, n)
 
         # Constrain series 5 to have zero loading on factor 3
-        c = zero_loading(5, 3, r)
+        c = zero_loading(5, 3)
 
         fm = FactorModel(X, r; constraints = c, scale = false)
 
@@ -489,9 +492,9 @@ import Factotum: Tables
         X = randn(T, n)
 
         # Multiple constraints
-        c1 = normalize_loading(1, 1, r; value = 1.0)
-        c2 = zero_loading(5, 3, r)
-        c3 = normalize_loading(10, 2, r; value = 0.5)
+        c1 = normalize_loading(1, 1; value = 1.0)
+        c2 = zero_loading(5, 3)
+        c3 = normalize_loading(10, 2; value = 0.5)
 
         constraints = vcat(c1, vcat(c2, c3))
 
@@ -510,7 +513,7 @@ import Factotum: Tables
         X = randn(T, n)
 
         # With constraints, method should auto-select :ls
-        c = normalize_loading(1, 1, r)
+        c = normalize_loading(1, 1)
         fm = FactorModel(X, r; constraints = c)
 
         @test numfactors(fm) == r
@@ -527,7 +530,7 @@ import Factotum: Tables
         X[1:10, 1] .= NaN
         X[50:60, 5] .= NaN
 
-        c = normalize_loading(2, 1, r; value = 1.0)  # Series 2 (not series 1 which has NaN)
+        c = normalize_loading(2, 1; value = 1.0)  # Series 2 (not series 1 which has NaN)
 
         fm = FactorModel(X, r; constraints = c, scale = false)
 
@@ -546,7 +549,7 @@ import Factotum: Tables
         X_missing[1:5, 1] .= NaN
 
         r = 3
-        c = normalize_loading(1, 1, r)
+        c = normalize_loading(1, 1)
 
         # PCA with missing data should error
         @test_throws ArgumentError FactorModel(X_missing, r; method = :pca)
@@ -605,7 +608,7 @@ import Factotum: Tables
         @test estimationmethod(fm_auto_em) isa EM
 
         # Test auto-selection: constraints -> LeastSquares
-        c = normalize_loading(1, 1, r)
+        c = normalize_loading(1, 1)
         fm_auto_ls = FactorModel(X, r; constraints = c)
         @test estimationmethod(fm_auto_ls) isa LeastSquares
 
@@ -625,21 +628,21 @@ import Factotum: Tables
         io = IOBuffer()
         show(io, fm_pca)
         output = String(take!(io))
-        @test occursin("Principal Component Analysis", output)
+        @test occursin("PCA", output)
 
         # Test EM output
         fm_em = FactorModel(X, r; method = :em)
         io = IOBuffer()
         show(io, fm_em)
         output = String(take!(io))
-        @test occursin("EM Algorithm", output)
+        @test occursin("EM", output)
 
         # Test LS output
         fm_ls = FactorModel(X, r; method = :ls)
         io = IOBuffer()
         show(io, fm_ls)
         output = String(take!(io))
-        @test occursin("Iterative Least Squares", output)
+        @test occursin("LS", output)
     end
 
     @testset "Type parameter dispatch" begin
@@ -752,7 +755,7 @@ import Factotum: Tables
 
         @testset "Validation: ic with constraints errors" begin
             X = randn(50, 10)
-            c = normalize_loading(1, 1, 3)
+            c = normalize_loading(1, 1)
             @test_throws ArgumentError FactorModel(X, 3; ic = IC1, constraints = c)
         end
 

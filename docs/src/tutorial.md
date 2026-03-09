@@ -6,10 +6,10 @@ This tutorial showcases the main features of `Factotum.jl,`ranging from basic fa
 
 Dynamic factor models represent high-dimensional data as a combination of a few latent factors plus idiosyncratic noise:
 $$
-\begin{align*}
+\begin{aligned}
 \underset{(N\times1)}{X_{t}}	&=\underset{(N\times r)}{\Lambda\vphantom{_t}}\underset{(r\times1)}{F_{t}}+\underset{(N\times1)}{e_{t}}\\
 \underset{(r\times1)}{F_{t}}	&=\underset{(r\times r)}{\Phi\vphantom{_t}}\underset{(r\times1)}{F_{t-1}}+\underset{(r\times m)}{R\vphantom{_t}}\underset{(m\times1)}{\eta_{t}}
-\end{align*},
+\end{aligned},
 $$
 where $F_t$ is a vector of latent _factors_, $\Lambda$ is a matrix of _loading_, $e_t$ is the idiosyncratic error. The second equation spcifies the dynamic of $F_t$ as a VAR with matrix coefficient $\Phi$, error $\eta_t$ and selection matrix $R$. Commonly this model is  Notice that each element of $X_{it}$ can be expressed as
 $$
@@ -17,9 +17,7 @@ X_{it} = \lambda_i' F_t + e_{it}, \quad i=1,\ldots, N, \, \, t = 1,\ldots, T.
 $$
 The errors $e_t$ and $\eta_t$ are assumed to be serially uncorrelated 
 
-
-
-`Factotum.jl` estimates ``F`` and $\Lambda$ using Principal Component Analysis (PCA), EM algorithm (for missing data), or iterative Least Squares (for constrained estimation).
+`Factotum.jl` estimates $\{F_t\}$ and $\Lambda$ using Principal Component Analysis (PCA), EM algorithm (for missing data), or iterative Least Squares (for constrained estimation).
 
 ### Principal Component Estimation
 
@@ -29,13 +27,8 @@ $$
 $$
 The solution is sought by imposing the following normalization:
 $$
-\Lambda'\Lambda = I_n
+\Lambda'\Lambda = I_n.
 $$
-
-
-
-
-
 
 ## Basic Usage
 
@@ -142,11 +135,7 @@ println("Standard deviations: ", round.(sd, digits=4))
 
 ## Model Selection with Information Criteria
 
-A critical question in factor analysis is: *how many factors should we use?* Factotum.jl provides several information criteria to help answer this question.
-
-### Available Criteria
-
-The package implements 12 information criteria from the literature:
+`Factotum.jl` implements calculation several information criteria for number of factors determination. In particular, the package implements 12 information criteria from the literature:
 
 | Criterion | Description |
 |-----------|-------------|
@@ -245,7 +234,7 @@ println("Factors 2-4 loadings size: ", size(loadings(fm24_view)))
 
 ## Handling Missing Data
 
-Factotum.jl supports data with missing values (represented as `NaN`) using an EM algorithm.
+`Factotum.jl` supports data with missing values (represented as `NaN`) using either EM algorithm or iterative LS. 
 
 ### Automatic Detection
 
@@ -275,7 +264,7 @@ fm_em_custom = FactorModel(X_full, 5;
     method=:em,           # Explicit EM (auto-selected with NaN anyway)
     init=Factotum.NaNStatistics.nanmedian,  # Use median for initial imputation
     maxiter=2000,         # Maximum iterations
-    tol=1e-10             # Convergence tolerance
+    tol=1e-8              # Convergence tolerance
 )
 
 # Check which method was used
@@ -300,14 +289,37 @@ The algorithm iterates until the maximum change in imputed values falls below th
 
 The `:ls` (Least Squares) method can also handle missing data. It works differently from EM:
 
-- **EM**: Imputes missing values, then runs PCA on completed data
-- **LS**: Skips missing values during regression updates (no imputation)
+- **EM**: Imputes missing values, then runs PCA on the completed data
+- **LS**: Skips missing observations during the regression updates — each loading vector ``\lambda_i`` is estimated by OLS using only the non-missing observations of series ``i``, and each factor ``F_t`` is estimated using only the non-missing series at time ``t``
 
-Both methods should identify the same underlying factor structure. Let's verify this using the macroeconomic data.
+The LS algorithm alternates between updating loadings (series by series) and updating factors (time period by time period) until the sum of squared residuals converges.
+
+#### LS Algorithm Options
+
+```@example tutorial
+# LS with explicit options
+fm_ls_opts = FactorModel(X_full, 5;
+    method=:ls,
+    scale=true,
+    maxiter=2000,          # Maximum iterations (default: 1000)
+    tol=1e-10,             # Convergence tolerance on SSR (default: 1e-8)
+    nt_min=10,             # Minimum non-missing obs per series (default: 10)
+    orthonormalize=true    # QR orthonormalization after convergence (default: true)
+)
+println("Method: ", estimationmethod(fm_ls_opts))
+nothing # hide
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `maxiter` | `1000` | Maximum number of LS iterations |
+| `tol` | `1e-8` | Convergence criterion: the algorithm stops when ``\lvert SSR_{old} - SSR \rvert < tol \times T \times N`` |
+| `nt_min` | `10` | Series with fewer than `nt_min` non-missing observations are skipped during loading estimation |
+| `orthonormalize` | `true` | Apply QR decomposition after convergence so that ``\Lambda'\Lambda = I``. Automatically disabled when constraints are provided (see [Constrained Factor Estimation](@ref)) |
 
 ## Comparing EM and LS on Missing Data
 
-When data contains missing values, both EM and LS can estimate factors. While the factors themselves may differ in scale and rotation, they should span the **same column space** — meaning any factor from one method can be expressed as a linear combination of factors from the other.
+The factors estimated using EM and LS usually differ, but they span the same column space, that is, a factor from one method can be expressed as a linear combination of factors from the other.
 
 ### Fitting Both Models
 
@@ -431,23 +443,64 @@ The iterative Least Squares method supports linear constraints on factor loading
 
 - **Sign normalization**: Fixing the sign of a factor (e.g., requiring positive loading on a reference variable)
 - **Zero restrictions**: Excluding certain variables from loading on specific factors
-- **Identification**: Imposing structure for economic interpretation
+- **Named-factor identification**: Imposing an identity structure to fully resolve rotational indeterminacy
+
+### Normalization and Identification
+
+Factor models suffer from an inherent rotational indeterminacy: for any invertible ``r \times r`` matrix ``H``, the decomposition ``X = F \Lambda' + e`` is observationally equivalent to ``X = (FH)(H^{-1}\Lambda') + e``. To obtain a unique solution, we must impose normalizations.
+
+**Default normalization (PCA and unconstrained LS).**
+When no constraints are provided, Factotum.jl imposes the normalization ``\Lambda'\Lambda = I_r`` (orthonormal loadings). In the PCA method, this arises naturally from the eigendecomposition. In the LS method, orthonormalization is applied *after* convergence via a QR decomposition of ``\Lambda``: if ``\Lambda = QR``, then the orthonormal loadings are ``Q`` and the factors are rotated to ``FR'``. This ensures that factors are orthogonal and loadings are normalized, matching the PCA convention.
+
+**Normalization with constraints.**
+When constraints are provided, the post-estimation orthonormalization is **disabled** to preserve the constraint structure. This means:
+
+- If you impose only **sign normalizations** (e.g., ``\lambda_{1,1} = 1``), the remaining loadings are *not* forced to be orthonormal. The factors and loadings are the raw output of the iterative LS algorithm. The factors will generally not be orthogonal, and ``\Lambda'\Lambda \neq I``.
+- If you impose **identity normalization** via [`identity_loading`](@ref), you get ``r^2`` restrictions that fully resolve the rotational indeterminacy. The loadings submatrix for the named series equals ``I_r``, and each factor is pinned to a specific reference variable.
+
+In short: with constraints, orthonormalization is sacrificed to honor the constraints. If you need both orthonormal factors and constraints, you must impose enough constraints to achieve the desired structure yourself.
 
 ### Creating Constraints
 
-Use `normalize_loading` to fix a loading value:
+Factotum.jl provides four helper functions for creating loading constraints:
+
+#### Sign normalization with `normalize_loading`
+
+Fix a single loading entry to a specific value:
 
 ```@example tutorial
-# Create a 3-factor model where series 1 has loading = 1.0 on factor 1
-c1 = normalize_loading(1, 1, 3; value=1.0)
+# Create a constraint: series 1 has loading = 1.0 on factor 1
+c1 = normalize_loading(1, 1; value=1.0)
 ```
 
-Use `zero_loading` to set a loading to zero:
+#### Zero restrictions with `zero_loading`
+
+Set a loading to zero (equivalent to `normalize_loading` with `value=0.0`):
 
 ```@example tutorial
 # Series 5 has zero loading on factor 2
-c2 = zero_loading(5, 2, 3)
+c2 = zero_loading(5, 2)
 ```
+
+#### Fix an entire loading vector with `fix_loading`
+
+Fix all loadings of a given series at once. The number of factors is inferred from the length of the values vector:
+
+```@example tutorial
+# Series 4 loads only on factor 3 (zero on all others)
+c3 = fix_loading(4, [0.0, 0.0, 1.0])
+```
+
+#### Identity normalization with `identity_loading`
+
+Impose a named-factor structure where each of the ``r`` reference series loads exclusively on its corresponding factor. The number of factors is inferred from the length of the series vector. This creates ``r^2`` constraints (``r`` diagonal entries equal to 1 and ``r^2 - r`` off-diagonal entries equal to 0), fully resolving the rotational indeterminacy:
+
+```@example tutorial
+# Series 1, 2, 3 define factors 1, 2, 3 respectively
+c_id = identity_loading([1, 2, 3])
+```
+
+#### Combining constraints
 
 Combine multiple constraints with `vcat`:
 
@@ -475,7 +528,7 @@ println("Loading of series 1 on factor 1: ", round(Lambda_c[1, 1], digits=6))
 For more complex constraints, you can specify them as a matrix where each row is `[series_index, R₁, R₂, ..., Rₖ, r]` representing the constraint ``R \cdot \lambda_i = r``:
 
 ```@example tutorial
-# Equivalent to normalize_loading(1, 1, 3; value=1.0)
+# Equivalent to normalize_loading(1, 1; value=1.0)
 # Row: [series=1, R=[1,0,0], r=1.0] meaning 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
 constraint_matrix = [
     1.0  1.0  0.0  0.0  1.0   # Series 1: λ₁ = 1
@@ -484,6 +537,24 @@ c_from_matrix = LoadingConstraints(constraint_matrix)
 
 fm_matrix = FactorModel(X, 3; constraints=c_from_matrix, scale=true)
 println("Loading (matrix format): ", round(loadings(fm_matrix)[1, 1], digits=6))
+```
+
+### Identity Normalization Example
+
+The identity normalization is particularly useful when you want each factor to have a clear economic interpretation tied to a specific reference variable:
+
+```@example tutorial
+# Each factor is "named" by a reference series
+# Factor 1 = series 1, Factor 2 = series 2, Factor 3 = series 3
+c_identity = identity_loading([1, 2, 3])
+fm_id = FactorModel(X, 3; constraints=c_identity, scale=true)
+
+# The loading matrix for the named series is the identity
+Λ_id = loadings(fm_id)
+println("Loadings of named series (should be ≈ I):")
+println("  Series 1: ", round.(Λ_id[1, :], digits=4))
+println("  Series 2: ", round.(Λ_id[2, :], digits=4))
+println("  Series 3: ", round.(Λ_id[3, :], digits=4))
 ```
 
 ### Constraints with Missing Data
@@ -497,9 +568,13 @@ println("Method: ", estimationmethod(fm_constrained_missing))
 println("Constrained loading: ", round(loadings(fm_constrained_missing)[1, 1], digits=6))
 ```
 
-### Orthonormalization Option
+### Orthonormalization in the LS Method
 
-By default, the LS method orthonormalizes loadings via QR decomposition to match PCA/EM conventions (``\Lambda'\Lambda = I``). You can disable this to get the raw LS solution:
+The iterative LS algorithm produces raw factor and loading estimates that do not satisfy any particular normalization. To make the output comparable to PCA and EM, the LS method applies a post-estimation orthonormalization step by default (`orthonormalize=true`). This step performs a QR decomposition of ``\Lambda = QR`` and sets ``\Lambda \leftarrow Q`` (orthonormal) and ``F \leftarrow FR'``, so that the final output satisfies ``\Lambda'\Lambda = I``.
+
+This orthonormalization is **automatically disabled** when constraints are provided, because applying QR would destroy the constraint structure. In that case the raw LS solution is returned regardless of the `orthonormalize` setting.
+
+You can also explicitly disable orthonormalization for unconstrained models with `orthonormalize=false`:
 
 ```@example tutorial
 # With orthonormalization (default)
@@ -605,7 +680,7 @@ fm_auto2 = FactorModel(X_full, 3)
 println("Missing data → ", estimationmethod(fm_auto2))
 
 # Auto-selects LeastSquares (constraints provided)
-c = normalize_loading(1, 1, 3)
+c = normalize_loading(1, 1)
 fm_auto3 = FactorModel(X, 3; constraints=c)
 println("With constraints → ", estimationmethod(fm_auto3))
 ```
