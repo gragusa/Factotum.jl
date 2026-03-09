@@ -27,7 +27,8 @@ estimationmethod
 
 ### Example: Method-specific Dispatch
 
-```@example api
+```{julia}
+#| label: api
 using Factotum
 using Random
 Random.seed!(42)
@@ -101,7 +102,8 @@ Factotum.jl provides 12 information criteria for model selection:
 
 Each criterion can be called as a function:
 
-```@example api
+```{julia}
+#| label: api
 using Factotum
 using Random
 Random.seed!(42)
@@ -116,7 +118,8 @@ println("Optimal number of factors: ", numfactors(ic1))
 
 ### Computing Multiple Criteria
 
-```@example api
+```{julia}
+#| label: api
 # Compute multiple criteria simultaneously
 criteria = informationcriteria((IC1, IC2, IC3, BIC1), fm, 8)
 
@@ -152,7 +155,8 @@ criterion
 
 ### Working with Criterion Results
 
-```@example api
+```{julia}
+#| label: api
 # Get the criterion values
 values = criterion(ic1)
 println("Values for r=0 to 8: ", round.(values, digits=3))
@@ -166,7 +170,8 @@ println("Minimum at r=$(result.r) with value=$(round(result[1], digits=3))")
 
 Create views into a factor model with a subset of factors:
 
-```@example api
+```{julia}
+#| label: api
 fm = FactorModel(randn(100, 20), 5)
 
 # View with first 3 factors
@@ -182,7 +187,8 @@ println("Loadings shape: ", size(loadings(fm24)))
 
 The package automatically handles missing values (NaN) using an EM algorithm:
 
-```@example api
+```{julia}
+#| label: api
 using Random
 Random.seed!(42)
 
@@ -239,7 +245,7 @@ identity_loading
 
 ### Normalization Behavior
 
-The default normalization is ``\Lambda'\Lambda = I`` (orthonormal loadings), which is enforced by PCA
+The default normalization is $\Lambda'\Lambda = I$ (orthonormal loadings), which is enforced by PCA
 and by the LS method when no constraints are provided (via QR decomposition after convergence).
 
 When constraints are supplied, orthonormalization is **disabled** to preserve the constraint structure.
@@ -247,12 +253,13 @@ This means:
 
 - **Sign normalization only** (e.g., `normalize_loading`): factors and loadings are the raw LS output.
   Loadings are *not* orthonormal and factors are *not* orthogonal.
-- **Identity normalization** (`identity_loading`): imposes ``r^2`` constraints that fully resolve
-  rotational indeterminacy. The loading submatrix for the named series equals ``I_r``.
+- **Identity normalization** (`identity_loading`): imposes $r^2$ constraints that fully resolve
+  rotational indeterminacy. The loading submatrix for the named series equals $I_r$.
 
 ### Creating Constraints
 
-```@example api
+```{julia}
+#| label: api
 using Factotum
 
 # Fix loading of series 1 on factor 1 to 1.0 (sign normalization)
@@ -273,7 +280,8 @@ constraints = vcat(c1, c2)
 
 ### Using Constraints
 
-```@example api
+```{julia}
+#| label: api
 using Random
 Random.seed!(42)
 X = randn(100, 20)
@@ -291,7 +299,8 @@ println("Method: ", estimationmethod(fm))
 
 For complex constraints, use a matrix where each row is `[series, R₁, ..., Rₖ, r]`:
 
-```@example api
+```{julia}
+#| label: api
 # Constraint: series 1, factor 1 loading = 1.0
 # Format: [series, R₁, R₂, R₃, r] where R·λ = r
 constraint_matrix = [

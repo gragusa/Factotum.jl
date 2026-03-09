@@ -1,9 +1,11 @@
 using Documenter
+using DocumenterQuartoExt
 using Factotum
 
 DocMeta.setdocmeta!(Factotum, :DocTestSetup, :(using Factotum, LinearAlgebra); recursive = true)
 
-makedocs(
+quarto_makedocs(;
+    source = joinpath(@__DIR__, "src"),
     sitename = "Factotum.jl",
     modules = [Factotum],
     format = Documenter.HTML(

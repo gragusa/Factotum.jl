@@ -24,7 +24,8 @@ Pkg.add("Factotum")
 
 We demonstrate Factotum.jl using a panel of 233 quarterly US macroeconomic time series (1959-2024), including output, employment, prices, interest rates, and money supply indicators. The data has been transformed for stationarity and locally demeaned.
 
-```@example quickstart
+```{julia}
+#| label: quickstart
 using Factotum
 using CSV, DataFrames
 
@@ -48,7 +49,8 @@ Factotum.describe(fm)
 
 Extract the estimated factors and loadings:
 
-```@example quickstart
+```{julia}
+#| label: quickstart
 F = factors(fm)       # T×r factor matrix
 Lambda = loadings(fm) # n×r loadings matrix
 println("Factor matrix size: ", size(F))
@@ -59,7 +61,8 @@ println("Loadings matrix size: ", size(Lambda))
 
 Use information criteria to determine the optimal number of factors:
 
-```@example quickstart
+```{julia}
+#| label: quickstart
 # Fit model with maximum number of factors
 fm_max = FactorModel(X, 10; scale=true)
 
@@ -72,7 +75,8 @@ println("Optimal number of factors (IC1): ", numfactors(ic))
 
 Factotum.jl automatically handles missing values using an EM algorithm. The full macroeconomic dataset contains series with missing values due to different start dates and data transformations:
 
-```@example quickstart
+```{julia}
+#| label: quickstart
 # Use the full dataset with missing values
 println("Full dataset: $(size(X_full, 1)) quarters × $(size(X_full, 2)) variables")
 println("Missing values: ", sum(isnan.(X_full)), " (", round(100 * sum(isnan.(X_full)) / length(X_full), digits=1), "%)")
@@ -89,7 +93,8 @@ println("Estimation method: ", estimationmethod(fm_em))
 
 Each `FactorModel` is parameterized by its estimation method type. You can query the method and dispatch on it:
 
-```@example quickstart
+```{julia}
+#| label: quickstart
 # Check which method was used
 println("Balanced data method: ", estimationmethod(fm))      # PCA()
 println("Missing data method: ", estimationmethod(fm_em))    # EM()
