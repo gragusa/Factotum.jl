@@ -6,8 +6,56 @@ using PrettyTables
 using Printf
 using Statistics
 using StatsBase
+using Tables
 
 abstract type AbstractFactorModel end
+
+"""
+    AbstractInformationCriterion
+
+Abstract supertype for information criteria used to select the number of factors.
+
+All criteria can be called as functions: `IC1(fm, kmax)` or `IC1(X, kmax; kwargs...)`.
+
+Use `numfactors(ic)` to get the optimal r, or `criterion(ic)` for all values.
+
+# Available Criteria
+
+From Bai and Ng (2002):
+- `IC1`, `IC2`, `IC3` - Information criteria
+- `PCp1`, `PCp2`, `PCp3` - Panel Cp variants
+
+Standard criteria:
+- `AIC1`, `AIC2`, `AIC3` - AIC-based
+- `BIC1`, `BIC2`, `BIC3` - BIC-based
+
+# Examples
+
+```jldoctest
+julia> X = randn(100, 20);
+
+julia> fm = FactorModel(X, 8);
+
+julia> ic = IC1(fm, 8);
+
+julia> numfactors(ic) >= 0
+true
+```
+
+Direct from data:
+
+```jldoctest
+julia> X = randn(100, 20);
+
+julia> ic = IC1(X, 5; scale=true);
+
+julia> numfactors(ic) >= 0
+true
+```
+
+See also: [`informationcriteria`](@ref), [`criterion`](@ref)
+"""
+abstract type AbstractInformationCriterion end
 
 ## ------------------------------------------------------------
 ## Estimation Method Types
@@ -91,12 +139,12 @@ struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix,
     stats::S
 end
 
-struct FactorModelView{M <: AbstractMatrix, S <: AbstractMatrix, V <: AbstractVector, R} <:
+struct FactorModelView{M <: AbstractMatrix, L <: AbstractMatrix, V <: AbstractVector, R} <:
        AbstractFactorModel
     "The matrix of factors"
     factors::M
     "The matrix of loadings"
-    loadings::S
+    loadings::L
     "The eigenvalues of X'X"
     eigenvalues::V
     "Residuals from the factor model (X̄ - F*Λ')"
@@ -113,36 +161,49 @@ end
 """
     LoadingConstraints
 
-Linear constraints on factor loadings of the form R × λᵢ = r.
+Linear constraints on factor loadings: `R × λᵢ = r` for specified series.
 
-Each constraint specifies:
-- Which series (row of Λ) to constrain
-- A linear combination of loadings (R vector)
-- The value that combination should equal (r)
+Used with the `:ls` estimation method for sign normalization, zero restrictions,
+or identification constraints.
 
 # Constructors
 
-    LoadingConstraints(series::Vector{Int}, R::Matrix{Float64}, r::Vector{Float64})
-    LoadingConstraints(constraints::Matrix)
+- `LoadingConstraints(series, R, r)` - direct specification
+- `LoadingConstraints(matrix)` - each row is `[series, R₁, ..., Rₖ, r]`
 
-For the matrix constructor, each row is: [series_index, R₁, R₂, ..., Rₖ, r]
+See also: [`normalize_loading`](@ref), [`zero_loading`](@ref)
 
-# Example
-```julia
-# 3-factor model constraints:
-# - Series 1: λ₁ = 1 (normalize first loading on factor 1)
-# - Series 5: λ₃ = 0 (no loading on factor 3)
-constraints = LoadingConstraints(
-    [1, 5],                      # series indices
-    [1.0 0.0 0.0; 0.0 0.0 1.0],  # R matrices (one row per constraint)
-    [1.0, 0.0]                   # r values
-)
+# Examples
 
-# Or using matrix format:
-constraints = LoadingConstraints([
-    1.0  1.0  0.0  0.0  1.0;  # 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
-    5.0  0.0  0.0  1.0  0.0;  # 0*λ₁ + 0*λ₂ + 1*λ₃ = 0
-])
+Using helper functions (recommended):
+
+```jldoctest
+julia> c1 = normalize_loading(1, 1, 3; value=1.0);  # λ₁₁ = 1
+
+julia> c2 = zero_loading(5, 2, 3);  # λ₅₂ = 0
+
+julia> c = vcat(c1, c2);  # combine constraints
+
+julia> c.series
+2-element Vector{Int64}:
+ 1
+ 5
+```
+
+Using matrix format:
+
+```jldoctest
+julia> mat = [1.0  1.0  0.0  0.0  1.0];  # series 1: 1*λ₁ + 0*λ₂ + 0*λ₃ = 1
+
+julia> c = LoadingConstraints(mat);
+
+julia> c.series
+1-element Vector{Int64}:
+ 1
+
+julia> c.r
+1-element Vector{Float64}:
+ 1.0
 ```
 """
 struct LoadingConstraints
@@ -167,16 +228,45 @@ function Base.vcat(c1::LoadingConstraints, c2::LoadingConstraints)
     )
 end
 
+function Base.vcat(c1::LoadingConstraints, c2::LoadingConstraints, cs::LoadingConstraints...)
+    reduce(vcat, cs; init = vcat(c1, c2))
+end
+
 """
     normalize_loading(series, factor, numfactors; value=1.0)
 
-Create a constraint to set the loading of `series` on `factor` to `value`.
+Constrain loading of `series` on `factor` to equal `value`.
 
-# Example
-```julia
-# Force series 1 to have loading = 1.0 on factor 1 (sign normalization)
-c = normalize_loading(1, 1, 3; value=1.0)
+Common use: sign normalization by setting a reference loading to 1.0.
+
+# Examples
+
+```jldoctest
+julia> c = normalize_loading(1, 1, 3; value=1.0);
+
+julia> c.R
+1×3 Matrix{Float64}:
+ 1.0  0.0  0.0
+
+julia> c.r
+1-element Vector{Float64}:
+ 1.0
 ```
+
+Apply to estimation:
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> c = normalize_loading(1, 1, 3; value=1.0);
+
+julia> fm = FactorModel(X, 3; constraints=c);
+
+julia> round(loadings(fm)[1, 1], digits=6)
+1.0
+```
+
+See also: [`zero_loading`](@ref), [`LoadingConstraints`](@ref)
 """
 function normalize_loading(series::Int, factor::Int, numfactors::Int; value::Float64 = 1.0)
     R = zeros(1, numfactors)
@@ -187,16 +277,125 @@ end
 """
     zero_loading(series, factor, numfactors)
 
-Create a constraint to set the loading of `series` on `factor` to zero.
+Constrain loading of `series` on `factor` to zero.
 
-# Example
-```julia
-# Force series 5 to have zero loading on factor 3
-c = zero_loading(5, 3, 3)
+Use for excluding a variable from loading on a specific factor.
+
+# Examples
+
+```jldoctest
+julia> c = zero_loading(5, 2, 3);
+
+julia> c.series
+1-element Vector{Int64}:
+ 5
+
+julia> c.R
+1×3 Matrix{Float64}:
+ 0.0  1.0  0.0
+
+julia> c.r
+1-element Vector{Float64}:
+ 0.0
 ```
+
+Apply to estimation:
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> c = zero_loading(3, 2, 3);
+
+julia> fm = FactorModel(X, 3; constraints=c);
+
+julia> abs(loadings(fm)[3, 2]) < 1e-10
+true
+```
+
+See also: [`normalize_loading`](@ref), [`LoadingConstraints`](@ref)
 """
 function zero_loading(series::Int, factor::Int, numfactors::Int)
     normalize_loading(series, factor, numfactors; value = 0.0)
+end
+
+"""
+    fix_loading(series, values, numfactors)
+
+Fix the entire loading vector of `series` to `values`.
+
+Creates `numfactors` constraints, one per entry: λ_{series,k} = values[k]
+for k = 1, …, numfactors.
+
+# Examples
+
+```jldoctest
+julia> c = fix_loading(4, [0, 0, 1, 0, 0, 0], 6);
+
+julia> length(c.series)
+6
+
+julia> c.r
+6-element Vector{Float64}:
+ 0.0
+ 0.0
+ 1.0
+ 0.0
+ 0.0
+ 0.0
+```
+
+See also: [`normalize_loading`](@ref), [`zero_loading`](@ref), [`identity_loading`](@ref)
+"""
+function fix_loading(series::Int, values::AbstractVector, numfactors::Int)
+    length(values) == numfactors ||
+        throw(DimensionMismatch("length(values) = $(length(values)) but numfactors = $numfactors"))
+    R = Matrix{Float64}(I, numfactors, numfactors)
+    LoadingConstraints(fill(series, numfactors), R, Float64.(values))
+end
+
+"""
+    identity_loading(named_series, numfactors)
+
+Apply the named-factor (identity) normalization: for each k = 1, …, numfactors,
+fix the loading of `named_series[k]` to the k-th standard basis vector eₖ.
+
+This imposes r² restrictions (r unit entries on the diagonal, r²-r zeros off
+the diagonal), exactly resolving the rotational indeterminacy of the factor model.
+
+`named_series` must have length equal to `numfactors`.
+
+# Examples
+
+```jldoctest
+julia> c = identity_loading([1, 2, 3], 3);
+
+julia> length(c.series)
+9
+
+julia> c.r
+9-element Vector{Float64}:
+ 1.0
+ 0.0
+ 0.0
+ 0.0
+ 1.0
+ 0.0
+ 0.0
+ 0.0
+ 1.0
+```
+
+See also: [`fix_loading`](@ref), [`normalize_loading`](@ref)
+"""
+function identity_loading(named_series::AbstractVector{<:Integer}, numfactors::Int)
+    length(named_series) == numfactors ||
+        throw(DimensionMismatch("length(named_series) = $(length(named_series)) but numfactors = $numfactors"))
+    constraints = fix_loading(named_series[1], Float64.(I(numfactors)[:, 1]), numfactors)
+    for k in 2:numfactors
+        constraints = vcat(constraints,
+            fix_loading(named_series[k], Float64.(I(numfactors)[:, k]), numfactors))
+    end
+    constraints
 end
 
 function FactorModel(Z::AbstractMatrix{G}; kwargs...) where {G}
@@ -204,60 +403,95 @@ function FactorModel(Z::AbstractMatrix{G}; kwargs...) where {G}
 end
 
 """
-    FactorModel(Z, numfactors; demean=true, scale=false, corrected=false,
-                init=nanmean, maxiter=1000, tol=1e-8,
-                constraints=nothing, method=:auto, nt_min=10,
-                orthonormalize=true)
+    FactorModel(Z, numfactors; demean=true, scale=false, method=:auto, ...)
 
-Estimate a factor model using PCA, EM, or iterative least squares.
+Estimate a static factor model ``X = FΛ' + ε`` where `F` is T×r factors and `Λ` is n×r loadings.
 
-Returns a `FactorModel{E}` where `E` is the estimation method type
-([`PCA`](@ref), [`EM`](@ref), or [`LeastSquares`](@ref)).
+The method is auto-selected based on data and constraints:
+- Complete data, no constraints → PCA
+- Missing values (NaN) → EM algorithm
+- Constraints provided → Iterative Least Squares
 
 # Arguments
-- `Z`: T×n data matrix
-- `numfactors`: number of factors to extract
-- `demean`: center columns by their means
-- `scale`: standardize columns by their std
-- `corrected`: use corrected sample std
-- `init`: function to compute initial fill values for missing data (nanmean or nanmedian)
-- `maxiter`: maximum iterations for EM or LS algorithm
-- `tol`: convergence tolerance for EM or LS algorithm
-- `constraints`: optional `LoadingConstraints` for restricted estimation (requires `:ls` method)
-- `method`: estimation method - `:auto` (default), `:pca`, `:em`, or `:ls`
-- `nt_min`: minimum observations per series for LS algorithm (default: 10)
-- `orthonormalize`: for `:ls` method, orthonormalize loadings via QR (default: true)
+- `Z::AbstractMatrix`: T×n data matrix (rows=observations, columns=variables)
+- `numfactors::Int`: number of factors r to extract
+- `demean::Bool=true`: center columns by their means
+- `scale::Bool=false`: standardize columns to unit variance
+- `method::Symbol=:auto`: force `:pca`, `:em`, or `:ls` (default: auto-select)
+- `constraints::LoadingConstraints=nothing`: linear constraints on loadings (requires `:ls`)
+- `maxiter::Int=1000`: max iterations for EM/LS algorithms
+- `tol::Float64=1e-8`: convergence tolerance
+- `ic::Union{Nothing,Type{<:AbstractInformationCriterion}}=nothing`: if set (e.g., `IC2`),
+  use IC-adaptive factor selection inside the EM loop. `numfactors` acts as `kmax` and the
+  IC selects `r` at each iteration. Only active when the EM algorithm runs (i.e., data has
+  missing values). Cannot be combined with constraints or non-EM methods.
 
-# Methods
-- `:pca`: Standard PCA (requires no missing values, no constraints)
-- `:em`: EM algorithm (handles missing values, no constraints)
-- `:ls`: Iterative least squares (handles missing values and constraints)
-- `:auto`: Automatically selects method based on data and constraints:
-  - If `constraints` provided → `:ls`
-  - If missing values (NaN) detected → `:em`
-  - Otherwise → `:pca`
+# Examples
 
-# Querying the estimation method
-Use [`estimationmethod`](@ref) to query which method was used:
-```julia
-fm = FactorModel(X, 3)
-estimationmethod(fm)  # returns PCA(), EM(), or LeastSquares()
+Basic usage with PCA (complete data):
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> size(factors(fm))
+(100, 3)
+
+julia> size(loadings(fm))
+(10, 3)
+
+julia> estimationmethod(fm)
+PCA()
 ```
 
-# Example with constraints
-```julia
-# Constrain series 1 to have loading = 1.0 on factor 1
-c = normalize_loading(1, 1, 3; value=1.0)
-fm = FactorModel(X, 3; constraints=c)
-estimationmethod(fm)  # returns LeastSquares()
+With standardization:
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3; scale=true);
+
+julia> numfactors(fm)
+3
 ```
+
+Missing data triggers EM automatically:
+
+```jldoctest
+julia> X = randn(50, 8); X[1:5, 1] .= NaN;
+
+julia> fm = FactorModel(X, 2);
+
+julia> estimationmethod(fm)
+EM()
+```
+
+With loading constraints:
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> c = normalize_loading(1, 1, 3; value=1.0);
+
+julia> fm = FactorModel(X, 3; constraints=c);
+
+julia> estimationmethod(fm)
+LeastSquares()
+
+julia> round(loadings(fm)[1, 1], digits=6)
+1.0
+```
+
+See also: [`factors`](@ref), [`loadings`](@ref), [`estimationmethod`](@ref), [`LoadingConstraints`](@ref)
 """
 function FactorModel(Z::AbstractMatrix{G}, numfactors;
         demean::Bool = true, scale::Bool = false, corrected::Bool = false,
         init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
         constraints::Union{Nothing, LoadingConstraints} = nothing,
         method::Symbol = :auto, nt_min::Int = 10,
-        orthonormalize::Bool = true) where {G}
+        orthonormalize::Bool = true,
+        ic::Union{Nothing, Type{<:AbstractInformationCriterion}} = nothing) where {G}
     T, n = size(Z)
     T == 0 && throw(ArgumentError("Input matrix must not be empty (got size $(size(Z)))"))
     numfactors < 0 &&
@@ -268,6 +502,12 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
     # Auto-detect missing values
     has_missing = any(isnan, Z)
     has_constraints = constraints !== nothing
+
+    # Validate ic kwarg
+    if ic !== nothing
+        has_constraints &&
+            throw(ArgumentError("ic cannot be used with constraints. Use ic=nothing or remove constraints"))
+    end
 
     # Validate constraints
     if has_constraints
@@ -289,6 +529,14 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
         end
     else
         method
+    end
+
+    # Validate ic with explicit method choice
+    if ic !== nothing
+        actual_method == :pca &&
+            throw(ArgumentError("ic cannot be used with method=:pca. IC-adaptive selection requires the EM algorithm"))
+        actual_method == :ls &&
+            throw(ArgumentError("ic cannot be used with method=:ls. IC-adaptive selection requires the EM algorithm"))
     end
 
     # Validate method choice
@@ -327,7 +575,7 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             X,
             stats) = extract_em(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected,
-            init = init, maxiter = maxiter, tol = tol)
+            init = init, maxiter = maxiter, tol = tol, ic = ic)
         FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
     elseif actual_method == :ls
         (F,
@@ -352,9 +600,7 @@ end
 function extract_pca(
         Z, numfactors; demean::Bool = true, scale::Bool = false, corrected::Bool = false)
     T, n = size(Z)
-    μ = demean ? mean(Z; dims = 1) : zeros(1, n)
-    σₓ = scale ? std(Z; dims = 1, corrected = corrected) : ones(1, n)
-    X = (Z .- μ) ./ σₓ
+    (X, μ, σₓ) = _standardize(Z; demean = demean, scale = scale, corrected = corrected)
 
     (F, Λ, λ) = _pca(X, numfactors)
     ε = X .- F * Λ'
@@ -363,14 +609,7 @@ function extract_pca(
     tss = sum(abs2, X)
     ssr = sum(abs2, ε)
     nobs = T * n
-
-    # R² for each series
-    r2vec = Vector{Float64}(undef, n)
-    for i in 1:n
-        tss_i = sum(abs2, @view X[:, i])
-        ssr_i = sum(abs2, @view ε[:, i])
-        r2vec[i] = 1.0 - ssr_i / tss_i
-    end
+    r2vec = _compute_r2vec(X, ε)
 
     stats = EstimationStats(tss, ssr, r2vec, nobs)
     (F, Λ, λ, ε, μ, σₓ, Z, X, stats)
@@ -423,6 +662,66 @@ function _pca(X, numfactors)
 end
 
 ## ------------------------------------------------------------
+## Internal Helper Functions
+## ------------------------------------------------------------
+
+# Standardize data: center by mean and optionally scale by std
+function _standardize(Z::AbstractMatrix;
+        demean::Bool = true, scale::Bool = false, corrected::Bool = false,
+        nan_aware::Bool = false)
+    n = size(Z, 2)
+    if nan_aware
+        μ = demean ? nanmean(Z; dims = 1) : zeros(1, n)
+        σₓ = scale ? nanstd(Z; dims = 1, corrected = corrected) : ones(1, n)
+    else
+        μ = demean ? mean(Z; dims = 1) : zeros(1, n)
+        σₓ = scale ? std(Z; dims = 1, corrected = corrected) : ones(1, n)
+    end
+    X = (Z .- μ) ./ σₓ
+    return (X, μ, σₓ)
+end
+
+# Compute R² for each series (no NaN in standardized data)
+function _compute_r2vec(X::AbstractMatrix, ε::AbstractMatrix)
+    n = size(X, 2)
+    r2vec = Vector{Float64}(undef, n)
+    for i in 1:n
+        tss_i = sum(abs2, @view X[:, i])
+        ssr_i = sum(abs2, @view ε[:, i])
+        r2vec[i] = 1.0 - ssr_i / tss_i
+    end
+    return r2vec
+end
+
+# Compute TSS and nobs, skipping NaN values
+function _sum_squares_skipnan(X::AbstractMatrix)
+    tss = zero(eltype(X))
+    nobs = 0
+    for val in X
+        if !isnan(val)
+            tss += val^2
+            nobs += 1
+        end
+    end
+    return (tss, nobs)
+end
+
+# Compute SSR skipping NaN values in X
+function _ssr_skipnan(X::AbstractMatrix, F::AbstractMatrix, Λ::AbstractMatrix)
+    T, n = size(X)
+    ssr = zero(eltype(X))
+    for i in 1:n, t in 1:T
+
+        val = X[t, i]
+        if !isnan(val)
+            pred = dot(@view(F[t, :]), @view(Λ[i, :]))
+            ssr += (val - pred)^2
+        end
+    end
+    return ssr
+end
+
+## ------------------------------------------------------------
 ## EM algorithm for missing data
 ## ------------------------------------------------------------
 
@@ -451,7 +750,8 @@ Same tuple as extract_ΛΛ/extract_FF: (F, Λ, λ, ε, μ, σₓ, Z, X)
 """
 function extract_em(Z, numfactors;
         demean::Bool = true, scale::Bool = false, corrected::Bool = false,
-        init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8)
+        init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
+        ic::Union{Nothing, Type{<:AbstractInformationCriterion}} = nothing)
     T, n = size(Z)
 
     # 1. Identify missing values
@@ -459,72 +759,112 @@ function extract_em(Z, numfactors;
     has_missing = any(missing_mask)
     missing_indices = findall(missing_mask)
 
-    # 2. Compute statistics on available data (using NaNStatistics)
-    μ = demean ? nanmean(Z; dims = 1) : zeros(1, n)
-    σₓ = scale ? nanstd(Z; dims = 1, corrected = corrected) : ones(1, n)
+    # IC-adaptive mode: numfactors acts as kmax, IC selects r per iteration
+    # Only active when ic !== nothing AND there are missing values (EM loop runs)
+    ic_adaptive = ic !== nothing && has_missing
+    kmax = numfactors  # PCA always uses kmax columns
 
-    # 3. Center and scale, then do initial imputation (column-wise)
-    X = (Z .- μ) ./ σₓ
-
+    # 2. Fill missing values with unconditional column means in raw data
+    #    (following McCracken & Ng MATLAB code: fill NaN first, then standardize)
+    Z_filled = copy(Z)
     if has_missing
         for j in 1:n
             col_mask = @view missing_mask[:, j]
             if any(col_mask)
-                col_data = @view X[.!col_mask, j]
-                fill_val = isempty(col_data) ? zero(eltype(X)) : init(col_data)
-                X[col_mask, j] .= fill_val
+                col_data = @view Z[.!col_mask, j]
+                fill_val = isempty(col_data) ? zero(eltype(Z)) : init(col_data)
+                Z_filled[col_mask, j] .= fill_val
             end
         end
+    end
 
-        # 4. EM iteration
+    # 3. Standardize the filled data
+    (X, μ,
+        σₓ) = _standardize(Z_filled; demean = demean, scale = scale,
+        corrected = corrected)
+
+    # Track IC-selected r across iterations (for final output)
+    r_selected = kmax
+
+    if has_missing
+        # 4. Initial PCA to get predicted values
+        (F, Λ, λ) = _pca(X, kmax)
+
+        # For IC-adaptive: select r and use only r factors for chat
+        if ic_adaptive
+            r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
+            chat = @views F[:, 1:r_selected] * Λ[:, 1:r_selected]'
+        else
+            chat = F * Λ'
+        end
+        chat0 = copy(chat)
+
+        # 5. EM iteration (following Stock-Watson / McCracken-Ng algorithm):
+        #    - Update missing values in raw data using predicted values
+        #    - Re-standardize the updated data
+        #    - Re-estimate factors
+        #    - Repeat until convergence
         converged = false
-        max_change = zero(eltype(X))
+        err = Inf
 
         for iter in 1:maxiter
-            # M-step: PCA on completed data
-            (F, Λ, λ) = _pca(X, numfactors)
-
-            # E-step: Impute missing values
-            max_change = zero(eltype(X))
-
+            # E-step: Update missing values in raw data
             for idx in missing_indices
                 i, j = idx[1], idx[2]
-                pred = dot(view(F, i, :), view(Λ, j, :))
-
-                change = abs(pred - X[idx])
-                max_change = max(max_change, change)
-                X[idx] = pred
+                # Undo standardization: x_raw = chat * σ + μ
+                Z_filled[idx] = chat[idx] * σₓ[1, j] + μ[1, j]
             end
 
-            if max_change < tol
+            # M-step: Re-standardize and re-estimate
+            (X,
+                μ,
+                σₓ) = _standardize(Z_filled; demean = demean, scale = scale,
+                corrected = corrected)
+            (F, Λ, λ) = _pca(X, kmax)
+
+            # For IC-adaptive: select r and use only r factors for chat
+            if ic_adaptive
+                r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
+                chat = @views F[:, 1:r_selected] * Λ[:, 1:r_selected]'
+            else
+                chat = F * Λ'
+            end
+
+            # Convergence check: relative change in predicted values
+            diff_vec = chat .- chat0
+            err = sum(abs2, diff_vec) / max(sum(abs2, chat0), eps())
+
+            chat0 .= chat
+
+            if err < tol
                 converged = true
                 break
             end
         end
 
         if !converged
-            @warn "EM algorithm did not converge after $maxiter iterations (final change: $(max_change))"
+            @warn "EM algorithm did not converge after $maxiter iterations (final change: $(err))"
         end
     end
 
-    # 5. Final PCA
-    (F, Λ, λ) = _pca(X, numfactors)
+    # 6. Final PCA on converged standardized data
+    (F, Λ, λ) = _pca(X, kmax)
+
+    # For IC-adaptive: do a final IC selection and trim to selected r
+    if ic_adaptive
+        r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
+        F = F[:, 1:r_selected]
+        Λ = Λ[:, 1:r_selected]
+        λ = λ[1:r_selected]
+    end
+
     ε = X .- F * Λ'
 
     # Compute estimation statistics (on standardized, imputed data)
     tss = sum(abs2, X)
     ssr = sum(abs2, ε)
-
-    # nobs = number of non-missing observations in original data
-    nobs = count(!isnan, Z)
-
-    # R² for each series
-    r2vec = Vector{Float64}(undef, n)
-    for i in 1:n
-        tss_i = sum(abs2, @view X[:, i])
-        ssr_i = sum(abs2, @view ε[:, i])
-        r2vec[i] = 1.0 - ssr_i / tss_i
-    end
+    nobs = count(!isnan, Z)  # non-missing observations in original data
+    r2vec = _compute_r2vec(X, ε)
 
     stats = EstimationStats(tss, ssr, r2vec, nobs)
     (F, Λ, λ, ε, μ, σₓ, Z, X, stats)
@@ -571,11 +911,11 @@ function extract_ls(Z, numfactors;
         orthonormalize::Bool = true)
     T, n = size(Z)
 
-    # Standardize using available data (MATLAB uses population std)
-    μ = demean ? nanmean(Z; dims = 1) : zeros(1, n)
-    # MATLAB: xstd = (nanstd(xdata).*mult)' where mult adjusts to population std
-    σₓ = scale ? nanstd(Z; dims = 1, corrected = false) : ones(1, n)
-    X = (Z .- μ) ./ σₓ
+    # Standardize using NaN-aware statistics (MATLAB uses population std)
+    (X,
+        μ,
+        σₓ) = _standardize(Z; demean = demean, scale = scale, corrected = false,
+        nan_aware = true)
 
     # Scale constraint values if data is scaled
     constraints_scaled = constraints
@@ -589,17 +929,7 @@ function extract_ls(Z, numfactors;
     end
 
     # Compute total sum of squares and nobs (on standardized data, ignoring NaN)
-    tss = zero(eltype(X))
-    nobs = 0
-    for i in 1:n
-        for t in 1:T
-            val = X[t, i]
-            if !isnan(val)
-                tss += val^2
-                nobs += 1
-            end
-        end
-    end
+    (tss, nobs) = _sum_squares_skipnan(X)
 
     # Initialize factors via PCA on balanced panel (columns with no missing data)
     # MATLAB: xbal = packr(xdata_std')' removes columns with NaN
@@ -694,16 +1024,7 @@ function extract_ls(Z, numfactors;
         end
 
         # Compute SSR (sum of squared residuals, ignoring NaN)
-        ssr = zero(eltype(X))
-        for i in 1:n
-            for t in 1:T
-                val = X[t, i]
-                if !isnan(val)
-                    pred = dot(@view(F[t, :]), @view(Λ[i, :]))
-                    ssr += (val - pred)^2
-                end
-            end
-        end
+        ssr = _ssr_skipnan(X, F, Λ)
 
         # Check convergence (MATLAB: diff = abs(ssr_old - ssr), while diff > tol*(nt*ns))
         if abs(ssr_old - ssr) < tol * T * n
@@ -804,12 +1125,17 @@ Base.size(fm::AbstractFactorModel) = size(fm.X̄)
 """
     numfactors(fm::AbstractFactorModel)
 
-Return the number of factors in the factor model.
+Return the number of factors r in the model.
 
-# Example
-```julia
-fm = FactorModel(X, 5)
-numfactors(fm)  # returns 5
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 5);
+
+julia> numfactors(fm)
+5
 ```
 """
 numfactors(fm::AbstractFactorModel) = size(loadings(fm), 2)
@@ -817,19 +1143,38 @@ numfactors(fm::AbstractFactorModel) = size(loadings(fm), 2)
 """
     loadings(fm::FactorModel; original_units::Bool=false)
 
-Return the n×r matrix of factor loadings, where n is the number of variables
-and r is the number of factors.
+Return the n×r loadings matrix Λ where each row contains a variable's loadings on the r factors.
+
+With default normalization, loadings are orthonormal: `Λ'Λ ≈ I`.
 
 # Arguments
-- `original_units`: If `true` and the model was fit with `scale=true`, return
-  loadings scaled to original data units (multiplied by column standard deviations).
-  Default is `false`.
+- `original_units::Bool=false`: if `true` and `scale=true` was used, return loadings
+  in original data units (Λ .* σ)
 
-# Example
-```julia
-fm = FactorModel(X, 3; scale=true)
-Λ = loadings(fm)                      # n×3 matrix (standardized units)
-Λ_orig = loadings(fm; original_units=true)  # n×3 matrix (original units)
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> Λ = loadings(fm);
+
+julia> size(Λ)
+(10, 3)
+```
+
+Loadings are orthonormal by default:
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> Λ = loadings(fm);
+
+julia> round.(Λ' * Λ, digits=10) ≈ I(3)
+true
 ```
 """
 function loadings(fm::FactorModel; original_units::Bool = false)
@@ -845,19 +1190,48 @@ loadings(fmv::FactorModelView) = fmv.loadings
 """
     factors(fm::AbstractFactorModel)
 
-Return the T×r matrix of estimated factors, where T is the number of observations
-and r is the number of factors.
+Return the T×r matrix F of estimated factors where each column is a latent factor time series.
 
-# Example
-```julia
-fm = FactorModel(X, 3)
-F = factors(fm)  # T×3 matrix
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> F = factors(fm);
+
+julia> size(F)
+(100, 3)
 ```
 """
 factors(fm::AbstractFactorModel) = fm.factors
 
 LinearAlgebra.eigvals(fm::AbstractFactorModel) = fm.eigenvalues
 
+"""
+    sdev(fm::AbstractFactorModel)
+
+Return the standard deviations of the factors, i.e., `sqrt.(eigvals(fm))`.
+
+These are the square roots of the eigenvalues of `cov(X, corrected=false)`.
+
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> sd = sdev(fm);
+
+julia> length(sd)
+3
+
+julia> sd ≈ sqrt.(eigvals(fm))
+true
+```
+"""
 function sdev(fm::AbstractFactorModel)
     λ = eigvals(fm)
     sqrt.(λ)
@@ -866,17 +1240,27 @@ end
 """
     explained_variance(fm::FactorModel)
 
-Return a vector of proportions of variance explained by each factor,
-relative to the total variance in the data.
+Return the proportion of total variance explained by each factor.
 
-The sum of all proportions equals the fraction of total variance captured
-by the r extracted factors (typically < 1).
+The sum gives the fraction of variance captured by all r factors (typically < 1).
 
-# Example
-```julia
-fm = FactorModel(X, 3)
-ev = explained_variance(fm)
-sum(ev)  # fraction of total variance explained by 3 factors
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 3);
+
+julia> ev = explained_variance(fm);
+
+julia> length(ev)
+3
+
+julia> all(ev .>= 0)
+true
+
+julia> sum(ev) <= 1.0
+true
 ```
 """
 function explained_variance(fm::FactorModel)
@@ -945,20 +1329,39 @@ nobs(fm::FactorModel) = fm.stats.nobs
 """
     estimationmethod(fm::FactorModel)
 
-Return the estimation method used to fit the factor model.
+Return the estimation method used: `PCA()`, `EM()`, or `LeastSquares()`.
 
-Returns one of: `PCA()`, `EM()`, or `LeastSquares()`.
+Useful for verifying which algorithm was auto-selected, or for dispatch.
 
-# Example
-```julia
-fm = FactorModel(X, 3)
-estimationmethod(fm)  # returns PCA()
+# Examples
 
-fm_em = FactorModel(X_with_nans, 3)
-estimationmethod(fm_em)  # returns EM()
+```jldoctest
+julia> X = randn(100, 10);
 
-fm_ls = FactorModel(X, 3; method=:ls)
-estimationmethod(fm_ls)  # returns LeastSquares()
+julia> fm = FactorModel(X, 3);
+
+julia> estimationmethod(fm)
+PCA()
+
+julia> fm_ls = FactorModel(X, 3; method=:ls);
+
+julia> estimationmethod(fm_ls)
+LeastSquares()
+```
+
+Dispatch on estimation method:
+
+```jldoctest
+julia> X = randn(50, 8);
+
+julia> describe_method(::FactorModel{PCA}) = "PCA";
+
+julia> describe_method(::FactorModel{EM}) = "EM";
+
+julia> fm = FactorModel(X, 2);
+
+julia> describe_method(fm)
+"PCA"
 ```
 """
 estimationmethod(::FactorModel{E}) where {E} = E()
@@ -1023,18 +1426,41 @@ end
 ## ------------------------------------------------------------
 ## Information Criteria
 ## ------------------------------------------------------------
-abstract type AbstractInformationCriterion end
+
+"IC1 criterion from Bai and Ng (2002). Penalty: `(N+T)/(NT) * log(NT/(N+T))`"
 struct IC1 <: AbstractInformationCriterion end
+
+"IC2 criterion from Bai and Ng (2002). Penalty: `(N+T)/(NT) * log(min(N,T))`"
 struct IC2 <: AbstractInformationCriterion end
+
+"IC3 criterion from Bai and Ng (2002). Penalty: `log(min(N,T)) / min(N,T)`"
 struct IC3 <: AbstractInformationCriterion end
+
+"PCp1 criterion (panel Cp variant). Same penalty as IC1."
 struct PCp1 <: AbstractInformationCriterion end
+
+"PCp2 criterion (panel Cp variant). Same penalty as IC2."
 struct PCp2 <: AbstractInformationCriterion end
+
+"PCp3 criterion (panel Cp variant). Same penalty as IC3."
 struct PCp3 <: AbstractInformationCriterion end
+
+"AIC1 criterion. Penalty: `2/T`"
 struct AIC1 <: AbstractInformationCriterion end
+
+"AIC2 criterion. Penalty: `2/N`"
 struct AIC2 <: AbstractInformationCriterion end
+
+"AIC3 criterion. Penalty: `2*(N+T-k)/(NT)`"
 struct AIC3 <: AbstractInformationCriterion end
+
+"BIC1 criterion. Penalty: `log(T)/T`"
 struct BIC1 <: AbstractInformationCriterion end
+
+"BIC2 criterion. Penalty: `log(N)/N`"
 struct BIC2 <: AbstractInformationCriterion end
+
+"BIC3 criterion. Penalty: `(N+T-k)*log(NT)/(NT)`"
 struct BIC3 <: AbstractInformationCriterion end
 
 struct InformationCriterion{M <: AbstractInformationCriterion, T <: AbstractFloat}
@@ -1059,6 +1485,52 @@ end ## This is probably transform
 transform_V(::Type{M}, V) where {M <: Union{IC1, IC2, IC3}} = log.(V)
 transform_V(::Type{M}, V) where {M <: AbstractInformationCriterion} = V
 
+"""
+    _select_numfactors_ic(ICType, X, F, Λ, kmax) -> Int
+
+Internal helper: select the number of factors via information criterion `ICType`
+using pre-computed PCA results (F, Λ from `_pca(X, kmax)`).
+
+Returns the optimal number of factors (at least 1).
+"""
+function _select_numfactors_ic(
+        ::Type{M}, X::AbstractMatrix, F::AbstractMatrix,
+        Λ::AbstractMatrix, kmax::Int) where {M <: AbstractInformationCriterion}
+    T, n = size(X)
+    nobs = T * n
+
+    # V(0): average squared value of X (no factors)
+    V0 = sum(abs2, X) / nobs
+
+    # V(k) for k = 1..kmax: average squared residual using first k factors
+    Vk = Vector{Float64}(undef, kmax)
+    for k in 1:kmax
+        Fk = @view F[:, 1:k]
+        Λk = @view Λ[:, 1:k]
+        ssr_k = sum(abs2, X .- Fk * Λk')
+        Vk[k] = ssr_k / nobs
+    end
+
+    VV = [V0; Vk]  # length kmax+1, indices correspond to k=0..kmax
+
+    # Apply transform (log for IC1/IC2/IC3, identity for PCp/AIC/BIC)
+    Vₖ = transform_V.(M, VV)
+
+    # Variance factor (1.0 for IC1/IC2/IC3, V(kmax) for others)
+    σ̂² = M <: Union{IC1, IC2, IC3} ? 1.0 : Vk[kmax]
+
+    # Penalty
+    gₜₙ = map(k -> k * penalty(M, T, n, k), 0:kmax)
+
+    # Criterion values for k = 0..kmax
+    crit = Vₖ .+ σ̂² .* gₜₙ
+
+    # Select k that minimizes criterion (at least 1)
+    _, idx = findmin(crit)
+    r = idx - 1  # 0-indexed: idx=1 corresponds to k=0
+    return max(r, 1)
+end
+
 function informationcriterion(
         s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where {M <: AbstractInformationCriterion}
     kₘₐₓ <= 0 && throw(ArgumentError("kₘₐₓ must be positive (got $kₘₐₓ)"))
@@ -1073,31 +1545,79 @@ function informationcriterion(
     InformationCriterion(M(), Vₖ + σ̂² .* gₜₙ, 0:last(rnge))
 end
 
-function informationcriteria(criterion::Tuple, fm, kₘₐₓ)
-    @assert all(map(x->isa(x(), Factotum.AbstractInformationCriterion), criterion)) "Some of the arguments is not a SelectionCriterion"
-    map(x->x(fm, kₘₐₓ), criterion)
+"""
+    informationcriteria(criteria::Tuple, fm::FactorModel, kmax::Int)
+
+Compute multiple information criteria simultaneously for model selection.
+
+Returns a tuple of `InformationCriterion` objects, one per criterion type.
+
+# Examples
+
+```jldoctest
+julia> X = randn(100, 20);
+
+julia> fm = FactorModel(X, 8);
+
+julia> ics = informationcriteria((IC1, IC2, BIC1), fm, 8);
+
+julia> length(ics)
+3
+
+julia> numfactors(ics[1]) >= 0
+true
+```
+
+Compare multiple criteria:
+
+```jldoctest
+julia> X = randn(100, 20);
+
+julia> fm = FactorModel(X, 5);
+
+julia> ics = informationcriteria((IC1, IC2), fm, 5);
+
+julia> results = findmin(ics);
+
+julia> length(results)
+2
+```
+
+See also: [`IC1`](@ref), [`IC2`](@ref), [`IC3`](@ref), [`criterion`](@ref), [`numfactors`](@ref)
+"""
+function informationcriteria(criteria::Tuple, fm, kₘₐₓ)
+    for c in criteria
+        isa(c(), AbstractInformationCriterion) ||
+            throw(ArgumentError("$(c) is not an AbstractInformationCriterion"))
+    end
+    map(c -> c(fm, kₘₐₓ), criteria)
 end
 
-(for criterion in
-     (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
-    eval(quote
+for criterion in
+    (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
+    @eval begin
         function ($criterion)(fm, kₘₐₓ::Int64)
-            Factotum.informationcriterion($criterion, fm, kₘₐₓ)
+            informationcriterion($criterion, fm, kₘₐₓ)
         end
-        Base.string(ic::($criterion)) = string(($criterion))
+        Base.string(::($criterion)) = $(string(criterion))
         function ($criterion)(X::Matrix, kₘₐₓ::Int64; kwargs...)
-            Factotum.informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
+            informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
         end
-    end)
-end)
+    end
+end
 
 function Base.findmin(ic::InformationCriterion)
-    fmin = findmin(ic.crit)
-    NamedTuple{(Symbol(string(ic.criterion)), :r)}(fmin)
+    val, idx = findmin(ic.crit)
+    k = ic.rnge[idx]
+    NamedTuple{(Symbol(string(ic.criterion)), :r)}((val, k))
 end
 
 function Base.findmin(ic::Tuple{Vararg{InformationCriterion, N}}) where {N}
-    fmin = map(x->findmin(x.crit), ic)
+    fmin = map(x -> begin
+            val, idx = findmin(x.crit)
+            k = x.rnge[idx]
+            (val, k)
+        end, ic)
     nm = map(x->(Symbol(x.criterion), :r), ic)
     TT = map(x->eltype(x.crit), ic)
     map((nm, x, T) -> NamedTuple{nm}(x), nm, fmin, TT)
@@ -1109,15 +1629,31 @@ Base.string(ic::InformationCriterion{T, F}) where {T, F} = string(T)
 """
     criterion(ic::InformationCriterion)
 
-Return the vector of information criterion values for each number of factors tested
-(from 0 to kmax).
+Return the vector of criterion values for r = 0, 1, ..., kmax factors.
 
-# Example
-```julia
-fm = FactorModel(X, 10)
-ic1 = IC1(fm, 10)
-values = criterion(ic1)  # Vector of 11 values (for r = 0, 1, ..., 10)
+The optimal r minimizes this vector (use `numfactors(ic)` or `findmin(ic)`).
+
+# Examples
+
+```jldoctest
+julia> X = randn(100, 10);
+
+julia> fm = FactorModel(X, 5);
+
+julia> ic = IC1(fm, 5);
+
+julia> vals = criterion(ic);
+
+julia> length(vals)  # values for r = 0, 1, 2, 3, 4, 5
+6
+
+julia> r_opt = numfactors(ic);
+
+julia> r_opt >= 0 && r_opt <= 5
+true
 ```
+
+See also: [`numfactors`](@ref), [`findmin`](@ref)
 """
 criterion(ic::InformationCriterion) = ic.crit
 
@@ -1184,112 +1720,296 @@ penalty(s::Type{BIC1}, T, N) = log(T)/T
 penalty(s::Type{BIC2}, T, N) = log(N)/N
 penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
-############################################################
-## Wald test
-############################################################
-# struct WaldTest
-#     tbl::NamedTuple
-#     rankmin::Int64
-#     rankₘₐₓ::Int64
-# end
+## ------------------------------------------------------------
+## R² Display Types and Functions
+## ------------------------------------------------------------
 
-# struct WaldTestFun{F, T, Z}
-#     f::F
-#     r::Int64
-#     vecsigma::T
-#     Vhat::Z
-# end
+"""
+    TotalR2
 
-# (wf::WaldTestFun)(theta) = wf.f(theta, wf.r, wf.vecsigma, wf.Vhat)
+Result type for total R² (all factors) per variable.
 
-# function waldobjfun(th, r, vecsigma, Vhat)
-#     ##r,k = size(theta) ## note that the rank being tested is r0 = r-1
-#     theta = reshape(th, r+1, length(th)÷(r+1))
-#     sigmamat = diagm(0=>theta[1,:].^2) .+ theta[2:r+1,:]'*theta[2:r+1,:]
-#     tempsigma = sigmamat[findall(tril(ones(size(sigmamat))).==1)]
-#     (vecsigma -tempsigma)' /Vhat *(vecsigma - tempsigma)
-# end
+Implements the Tables.jl interface so you can convert to a DataFrame:
 
-# X = randn(100,10);
-# fm = Factotum.FactorModel(X)
+```julia
+using DataFrames
+DataFrame(total_r2(fm))
+```
+"""
+struct TotalR2
+    varnames::Vector{String}
+    r2::Vector{Float64}
+    show_all::Bool
+end
 
-# function waldtest(fm::FactorModel, minrank::Int = 0, maxrank::Int = 2)
-#     X = copy(fm.X)
-#     T, n = size(X)
-#     ## Normalize factor
-#     Xs = X / diagm(0=>sqrt.(diag(cov(X))))
-#     covX = cov(Xs)
-#     meanX = mean(Xs, dims=1)
-#     vecsigma = Factotum.vech(covX)
-#     bigN = length(vecsigma)
-#     Vhat = Array{Float64}(undef, bigN, bigN)
-#     varvecsig = zeros(n,n,n,n);
+"""
+    ByFactorR2
 
-#     for i1 in 1:n, i2 = 1:n, i3 = 1:n, i4 = 1:n
-#         varvecsig[i1,i2,i3,i4] = sum( (Xs[:,i1] .- meanX[i1]).*(Xs[:,i2] .- meanX[i2]).*(Xs[:,i3] .- meanX[i3]) .*(Xs[:,i4] .- meanX[i4])) / T^2 - covX[i1,i2] *covX[i3,i4] /T
-#     end
+Result type for per-factor R² per variable.
 
-#     idx = findall(tril(ones(size(covX))).==1)
-#     for i=1:bigN, j=1:bigN   ## map elements of varvecsig array into matrix corresponding to
-#         Vhat[i,j] = varvecsig[idx[i],idx[j]]
-#     end
+Implements the Tables.jl interface so you can convert to a DataFrame:
 
-#     out_table = (rank = -1, waldstat = NaN, df = NaN, pvalue = NaN)
+```julia
+using DataFrames
+DataFrame(byfactor_r2(fm))
+```
+"""
+struct ByFactorR2
+    varnames::Vector{String}
+    r2mat::Matrix{Float64}   # n × r
+    factornames::Vector{String}
+    show_all::Bool
+end
 
-#     ## Initial values
-#     for k in minrank:maxrank
-#         wf = WaldTestFun(waldobjfun, k, vecsigma, Vhat)
-#         df = (n-k)*(n-k+1)/2 - n
+# --- Tables.jl interface for TotalR2 ---
 
-#         theta0 = theta_initial_value(n,k)
+Tables.istable(::Type{TotalR2}) = true
+Tables.columnaccess(::Type{TotalR2}) = true
 
-#         outs = Array{Tuple{Float64,Array{Float64,1},Bool},1}()
+function Tables.columns(t::TotalR2)
+    return t
+end
 
-#         for j in theta0
-#             out = Optim.optimize(wf, j, BFGS(), Optim.Options(allow_f_increases=true); autodiff=:forward)
-#             push!(outs, (out.minimum::Float64, out.minimizer::Array{Float64,1}, Optim.converged(out)::Bool))
-#         end
+function Tables.columnnames(t::TotalR2)
+    return (:Variable, :R2)
+end
 
-#         convouts = outs[map(x->x[3], outs)]
-#         out      = convouts[argmin(map(x->x[1], convouts))]
+function Tables.getcolumn(t::TotalR2, nm::Symbol)
+    if nm === :Variable
+        return t.varnames
+    elseif nm === :R2
+        return t.r2
+    else
+        throw(ArgumentError("TotalR2 has no column $nm"))
+    end
+end
 
-#         dfa = (rank = k, waldstat = out[1], df = df,  pvalue = 1-StatsFuns.chisqcdf(df, out[1]))
-#         append!(out_table, dfa)
-#     end
-#     filter!(raw->raw[:rank]>=0, out_table)
-#     WaldTest(out_table, minrank, maxrank)
-# end
+Tables.getcolumn(t::TotalR2, i::Int) = Tables.getcolumn(t, Tables.columnnames(t)[i])
 
-# function theta_initial_value(n,k)
-#     I3 = ones(1,n)/3
-#     ek = [diagm(0=>ones(k)) zeros(k, n-k)]
-#     t0 = ([I3; zeros(k,n)], [I3; ones(k,n)./(2*k)],[I3; ek./(2*k)], [I3; reverse(ek./(2*k), dims=2)])::NTuple{4,Array{Float64,2}}
-#     map(vec, t0)::NTuple{4,Array{Float64,1}}
-# end
+function Tables.schema(t::TotalR2)
+    return Tables.Schema((:Variable, :R2), (String, Float64))
+end
 
-# function vech(X::Matrix{S}) where S
-#     T, n = size(X)
-#     r = round(Int64, n*(n+1)/2)
-#     x = Array{S, 1}(undef, r)
-#     i = 1
-#     for j in 1:n, k in j:n
-#         x[i] = X[j,k]
-#         i += 1
-#     end
-#     x
-# end
+# --- Tables.jl interface for ByFactorR2 ---
+
+Tables.istable(::Type{ByFactorR2}) = true
+Tables.columnaccess(::Type{ByFactorR2}) = true
+
+function Tables.columns(t::ByFactorR2)
+    return t
+end
+
+function Tables.columnnames(t::ByFactorR2)
+    return (Symbol("Variable"), Symbol.(t.factornames)...)
+end
+
+function Tables.getcolumn(t::ByFactorR2, nm::Symbol)
+    if nm === :Variable
+        return t.varnames
+    else
+        idx = findfirst(==(String(nm)), t.factornames)
+        if idx !== nothing
+            return t.r2mat[:, idx]
+        else
+            throw(ArgumentError("ByFactorR2 has no column $nm"))
+        end
+    end
+end
+
+Tables.getcolumn(t::ByFactorR2, i::Int) = Tables.getcolumn(t, Tables.columnnames(t)[i])
+
+function Tables.schema(t::ByFactorR2)
+    names = Tables.columnnames(t)
+    types = (String, (Float64 for _ in t.factornames)...)
+    return Tables.Schema(names, types)
+end
+
+# --- User-facing functions ---
+
+"""
+    total_r2(fm::FactorModel; varnames=nothing, show_all=false)
+
+Return a `TotalR2` object showing per-variable R² (all factors combined).
+
+# Arguments
+- `varnames`: optional vector of variable names (default: `["V1", "V2", ...]`)
+- `show_all`: if `true`, display all variables; otherwise show top/bottom 10%
+
+# Examples
+
+```julia
+fm = FactorModel(randn(100, 20), 3; scale=true)
+total_r2(fm)                    # shows top/bottom 10%
+total_r2(fm; show_all=true)     # shows all variables
+
+using DataFrames
+DataFrame(total_r2(fm))         # convert to DataFrame
+```
+"""
+function total_r2(fm::FactorModel;
+        varnames::Union{Nothing, Vector{String}} = nothing,
+        show_all::Bool = false)
+    r2vec = r2(fm)
+    n = length(r2vec)
+    if varnames === nothing
+        varnames = ["V$i" for i in 1:n]
+    end
+    length(varnames) != n &&
+        throw(ArgumentError("varnames has length $(length(varnames)) but model has $n variables"))
+    TotalR2(varnames, r2vec, show_all)
+end
+
+"""
+    byfactor_r2(fm::FactorModel; varnames=nothing, show_all=false)
+
+Return a `ByFactorR2` object showing per-variable, per-factor R².
+
+For variable `i` and factor `j`:
+    R²ᵢⱼ = 1 - Σₜ(X̄ₜᵢ - Fₜⱼ·Λᵢⱼ)² / Σₜ X̄ₜᵢ²
+
+# Arguments
+- `varnames`: optional vector of variable names (default: `["V1", "V2", ...]`)
+- `show_all`: if `true`, display all variables; otherwise show top/bottom 10%
+
+# Examples
+
+```julia
+fm = FactorModel(randn(100, 20), 3; scale=true)
+byfactor_r2(fm)                  # shows per-factor R²
+
+using DataFrames
+DataFrame(byfactor_r2(fm))       # convert to DataFrame
+```
+"""
+function byfactor_r2(fm::FactorModel;
+        varnames::Union{Nothing, Vector{String}} = nothing,
+        show_all::Bool = false)
+    F = factors(fm)
+    Λ = loadings(fm)
+    X_bar = fm.X̄
+    n = size(Λ, 1)
+    r = size(Λ, 2)
+
+    if varnames === nothing
+        varnames = ["V$i" for i in 1:n]
+    end
+    length(varnames) != n &&
+        throw(ArgumentError("varnames has length $(length(varnames)) but model has $n variables"))
+
+    r2mat = Matrix{Float64}(undef, n, r)
+    for i in 1:n
+        tss_i = sum(abs2, @view X_bar[:, i])
+        for j in 1:r
+            ssr_ij = sum(t -> (X_bar[t, i] - F[t, j] * Λ[i, j])^2, 1:size(F, 1))
+            r2mat[i, j] = 1.0 - ssr_ij / tss_i
+        end
+    end
+
+    factornames = ["Factor_$j" for j in 1:r]
+    ByFactorR2(varnames, r2mat, factornames, show_all)
+end
+
+# --- Base.show methods ---
+
+function Base.show(io::IO, t::TotalR2)
+    n = length(t.r2)
+    printstyled(io, "\nTotal R² (all factors)\n", color = :green)
+    @printf io "Number of variables: %d\n\n" n
+
+    # Sort by R² descending
+    perm = sortperm(t.r2; rev = true)
+
+    if t.show_all || n <= 20
+        rows = perm
+        show_message = false
+    else
+        ntop = max(1, round(Int, 0.1 * n))
+        nbot = max(1, round(Int, 0.1 * n))
+        rows = vcat(perm[1:ntop], perm[(end - nbot + 1):end])
+        show_message = true
+    end
+
+    tbl = hcat(t.varnames[rows], t.r2[rows])
+    column_labels = ["Variable", "R²"]
+
+    hl_green = TextHighlighter(
+        (data, i, j) -> j == 2 && data[i, 2] isa Number && data[i, 2] >= 0.9,
+        Crayon(foreground = :green, bold = true))
+    hl_red = TextHighlighter(
+        (data, i, j) -> j == 2 && data[i, 2] isa Number && data[i, 2] < 0.1,
+        Crayon(foreground = :red))
+    style = TextTableStyle(first_line_column_label = crayon"yellow bold")
+
+    pretty_table(io, tbl;
+        column_labels = [column_labels],
+        style = style,
+        formatters = [fmt__printf("%8.4f", [2])],
+        highlighters = [hl_green, hl_red],
+        maximum_number_of_rows = -1)
+
+    if show_message
+        println(io, "\nShowing top/bottom 10%. Use show_all=true to see all variables.")
+    end
+end
+
+function Base.show(io::IO, t::ByFactorR2)
+    n = length(t.varnames)
+    r = length(t.factornames)
+    printstyled(io, "\nR² by Individual Factor\n", color = :green)
+    @printf io "Variables: %d, Factors: %d\n\n" n r
+
+    # Rank by total R² (row sum) descending
+    rowsums = vec(sum(t.r2mat; dims = 2))
+    perm = sortperm(rowsums; rev = true)
+
+    if t.show_all || n <= 20
+        rows = perm
+        show_message = false
+    else
+        ntop = max(1, round(Int, 0.1 * n))
+        nbot = max(1, round(Int, 0.1 * n))
+        rows = vcat(perm[1:ntop], perm[(end - nbot + 1):end])
+        show_message = true
+    end
+
+    tbl = hcat(t.varnames[rows], t.r2mat[rows, :])
+    column_labels = ["Variable"; t.factornames]
+
+    hl_green = TextHighlighter(
+        (data, i, j) -> j > 1 && data[i, j] isa Number && data[i, j] >= 0.5,
+        Crayon(foreground = :green, bold = true))
+    hl_yellow = TextHighlighter(
+        (data, i, j) -> j > 1 && data[i, j] isa Number && 0.1 <= data[i, j] < 0.5,
+        Crayon(foreground = :yellow))
+    style = TextTableStyle(first_line_column_label = crayon"yellow bold")
+
+    fmt_cols = collect(2:(r + 1))
+    pretty_table(io, tbl;
+        column_labels = [column_labels],
+        style = style,
+        formatters = [fmt__printf("%8.4f", fmt_cols)],
+        highlighters = [hl_green, hl_yellow],
+        maximum_number_of_rows = -1)
+
+    if show_message
+        println(io,
+            "\nShowing top/bottom 10% (ranked by total R²). Use show_all=true to see all variables.")
+    end
+end
 
 export FactorModel, EstimationStats, describe,
-       numfactors, factors, loadings, explained_variance,
+       numfactors, factors, loadings, explained_variance, sdev,
 # Estimation method types and accessor
        AbstractEstimationMethod, PCA, EM, LeastSquares, estimationmethod,
 # Estimation statistics
        stats, tss, ssr, r2, nobs,
+# R² display
+       TotalR2, ByFactorR2, total_r2, byfactor_r2,
 # Information criteria
        IC1, IC2, IC3, PCp1, PCp2, PCp3,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3,
        informationcriteria, criterion,
 # Constrained factor estimation
-       LoadingConstraints, normalize_loading, zero_loading
+       LoadingConstraints, normalize_loading, zero_loading, fix_loading, identity_loading
 
 end # module"

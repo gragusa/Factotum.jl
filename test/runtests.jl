@@ -1,5 +1,6 @@
 using Factotum, Statistics, LinearAlgebra, Test, Random, NaNStatistics
 using CSV, DataFrames
+import Factotum: Tables
 
 @testset "Factotum.jl" begin
     @testset "Basic factor model (T > n)" begin
@@ -661,8 +662,271 @@ using CSV, DataFrames
         @test test_dispatch(fm_ls) == :ls
     end
 
+    @testset "EM with IC-adaptive factor selection" begin
+        @testset "IC-adaptive selects correct dimensions with missing data" begin
+            Random.seed!(42)
+            T, n, r_true = 200, 30, 3
+            F_true = randn(T, r_true)
+            Λ_true = randn(n, r_true)
+            X = F_true * Λ_true' + 0.5 * randn(T, n)
+
+            # Introduce ~10% missing values
+            mask = rand(T, n) .< 0.1
+            X[mask] .= NaN
+
+            kmax = 15
+            fm = FactorModel(X, kmax; ic = IC2, scale = true)
+
+            # Should have fewer factors than kmax
+            @test numfactors(fm) < kmax
+            @test numfactors(fm) >= 1
+
+            # Dimensions must be consistent
+            @test size(factors(fm)) == (T, numfactors(fm))
+            @test size(loadings(fm)) == (n, numfactors(fm))
+            @test length(eigvals(fm)) == numfactors(fm)
+
+            # No NaN in output
+            @test !any(isnan, fm.X̄)
+            @test !any(isnan, factors(fm))
+            @test !any(isnan, loadings(fm))
+
+            # Method should be EM
+            @test estimationmethod(fm) isa EM
+        end
+
+        @testset "IC-adaptive selects approximately correct r" begin
+            Random.seed!(123)
+            T, n, r_true = 300, 40, 4
+            F_true = randn(T, r_true)
+            Λ_true = randn(n, r_true)
+            X = F_true * Λ_true' + 0.3 * randn(T, n)
+
+            # Introduce ~5% missing values
+            mask = rand(T, n) .< 0.05
+            X[mask] .= NaN
+
+            fm = FactorModel(X, 12; ic = IC1, scale = true)
+
+            # IC should select something close to the true r
+            @test numfactors(fm) >= r_true - 1
+            @test numfactors(fm) <= r_true + 4
+        end
+
+        @testset "All IC types work with IC-adaptive EM" begin
+            Random.seed!(456)
+            T, n = 100, 20
+            X = randn(T, n)
+            X[1:10, 1:3] .= NaN
+
+            for ICType in
+                [IC1, IC2, IC3, PCp1, PCp2, PCp3, AIC1, AIC2, AIC3, BIC1, BIC2, BIC3]
+                fm = FactorModel(X, 8; ic = ICType, scale = true)
+                @test numfactors(fm) >= 1
+                @test numfactors(fm) <= 8
+                @test !any(isnan, factors(fm))
+            end
+        end
+
+        @testset "ic=nothing preserves backward compatibility" begin
+            Random.seed!(789)
+            T, n, r = 100, 15, 4
+            X = randn(T, n)
+            X[1:5, 1] .= NaN
+
+            fm_default = FactorModel(X, r; scale = true)
+            fm_nothing = FactorModel(X, r; ic = nothing, scale = true)
+
+            @test numfactors(fm_default) == numfactors(fm_nothing)
+            @test eigvals(fm_default) ≈ eigvals(fm_nothing)
+        end
+
+        @testset "ic ignored when no missing data (no EM loop)" begin
+            Random.seed!(321)
+            X = randn(100, 15)
+
+            # No missing data => no EM loop => ic is ignored, model has numfactors factors
+            fm = FactorModel(X, 5; ic = IC2, method = :em)
+            @test numfactors(fm) == 5
+        end
+
+        @testset "Validation: ic with constraints errors" begin
+            X = randn(50, 10)
+            c = normalize_loading(1, 1, 3)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, constraints = c)
+        end
+
+        @testset "Validation: ic with :pca errors" begin
+            X = randn(50, 10)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, method = :pca)
+        end
+
+        @testset "Validation: ic with :ls errors" begin
+            X = randn(50, 10)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, method = :ls)
+        end
+    end
+
+    @testset "total_r2 and byfactor_r2" begin
+        Random.seed!(42)
+        X = randn(100, 20)
+        fm = FactorModel(X, 3; scale = true)
+
+        @testset "total_r2 - basic" begin
+            tr = total_r2(fm)
+            @test tr isa TotalR2
+            @test length(tr.r2) == 20
+            @test length(tr.varnames) == 20
+            @test tr.r2 == r2(fm)
+            @test tr.show_all == false
+
+            # Default varnames
+            @test tr.varnames == ["V$i" for i in 1:20]
+        end
+
+        @testset "total_r2 - custom varnames" begin
+            names = ["Var_$i" for i in 1:20]
+            tr = total_r2(fm; varnames = names)
+            @test tr.varnames == names
+        end
+
+        @testset "total_r2 - show_all" begin
+            tr = total_r2(fm; show_all = true)
+            @test tr.show_all == true
+        end
+
+        @testset "total_r2 - varnames length mismatch" begin
+            @test_throws ArgumentError total_r2(fm; varnames = ["a", "b"])
+        end
+
+        @testset "total_r2 - show doesn't error" begin
+            tr = total_r2(fm)
+            io = IOBuffer()
+            show(io, tr)
+            output = String(take!(io))
+            @test occursin("Total R²", output)
+            # n=20 <= 20, so all rows shown, no show_all message
+            @test !occursin("show_all=true", output)
+
+            # With show_all
+            tr_all = total_r2(fm; show_all = true)
+            io = IOBuffer()
+            show(io, tr_all)
+            output = String(take!(io))
+            @test occursin("Total R²", output)
+        end
+
+        @testset "total_r2 - show with many variables" begin
+            Random.seed!(42)
+            X_big = randn(100, 50)
+            fm_big = FactorModel(X_big, 3; scale = true)
+            tr = total_r2(fm_big)
+            io = IOBuffer()
+            show(io, tr)
+            output = String(take!(io))
+            @test occursin("show_all=true", output)
+        end
+
+        @testset "byfactor_r2 - basic" begin
+            br = byfactor_r2(fm)
+            @test br isa ByFactorR2
+            @test size(br.r2mat) == (20, 3)
+            @test length(br.varnames) == 20
+            @test length(br.factornames) == 3
+            @test br.factornames == ["Factor_1", "Factor_2", "Factor_3"]
+            @test br.show_all == false
+
+            # Default varnames
+            @test br.varnames == ["V$i" for i in 1:20]
+        end
+
+        @testset "byfactor_r2 - custom varnames" begin
+            names = ["Series_$i" for i in 1:20]
+            br = byfactor_r2(fm; varnames = names)
+            @test br.varnames == names
+        end
+
+        @testset "byfactor_r2 - varnames length mismatch" begin
+            @test_throws ArgumentError byfactor_r2(fm; varnames = ["x"])
+        end
+
+        @testset "byfactor_r2 - show doesn't error" begin
+            br = byfactor_r2(fm)
+            io = IOBuffer()
+            show(io, br)
+            output = String(take!(io))
+            @test occursin("R² by Individual Factor", output)
+        end
+
+        @testset "byfactor_r2 - mathematical correctness" begin
+            F = factors(fm)
+            Λ = loadings(fm)
+            X_bar = fm.X̄
+
+            br = byfactor_r2(fm)
+            # Check a few entries manually
+            for i in [1, 10, 20]
+                tss_i = sum(abs2, X_bar[:, i])
+                for j in 1:3
+                    ssr_ij = sum(t -> (X_bar[t, i] - F[t, j] * Λ[i, j])^2, 1:size(F, 1))
+                    expected = 1.0 - ssr_ij / tss_i
+                    @test br.r2mat[i, j] ≈ expected
+                end
+            end
+        end
+
+        @testset "Tables.jl interface - TotalR2" begin
+            tr = total_r2(fm)
+            @test Tables.istable(typeof(tr)) == true
+            @test Tables.columnaccess(typeof(tr)) == true
+            @test Tables.columnnames(tr) == (:Variable, :R2)
+
+            cols = Tables.columns(tr)
+            @test Tables.getcolumn(cols, :Variable) == tr.varnames
+            @test Tables.getcolumn(cols, :R2) == tr.r2
+            @test Tables.getcolumn(cols, 1) == tr.varnames
+            @test Tables.getcolumn(cols, 2) == tr.r2
+
+            # Schema
+            sch = Tables.schema(tr)
+            @test sch !== nothing
+
+            # DataFrame conversion
+            df = DataFrame(tr)
+            @test size(df) == (20, 2)
+            @test names(df) == ["Variable", "R2"]
+            @test df.R2 == r2(fm)
+        end
+
+        @testset "Tables.jl interface - ByFactorR2" begin
+            br = byfactor_r2(fm)
+            @test Tables.istable(typeof(br)) == true
+            @test Tables.columnaccess(typeof(br)) == true
+
+            colnames = Tables.columnnames(br)
+            @test colnames[1] == :Variable
+            @test length(colnames) == 4  # Variable + 3 factors
+
+            cols = Tables.columns(br)
+            @test Tables.getcolumn(cols, :Variable) == br.varnames
+            @test Tables.getcolumn(cols, :Factor_1) == br.r2mat[:, 1]
+
+            # Schema
+            sch = Tables.schema(br)
+            @test sch !== nothing
+
+            # DataFrame conversion
+            df = DataFrame(br)
+            @test size(df) == (20, 4)
+            @test names(df)[1] == "Variable"
+        end
+    end
+
     include("test_sw.jl")
 end
 
 # Aqua.jl quality assurance tests
 include("Aqua.jl")
+
+# Doctests
+include("doctests.jl")
