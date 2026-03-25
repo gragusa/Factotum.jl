@@ -127,9 +127,9 @@ let rng = StableRNG(DEFAULT_SEED + 20)
     X = generate_factor_data(rng, 200, 50, 3)
 
     # Create simple constraints: normalize first loading on each factor
-    c1 = normalize_loading(1, 1, 3; value = 1.0)
-    c2 = normalize_loading(2, 2, 3; value = 1.0)
-    c3 = normalize_loading(3, 3, 3; value = 1.0)
+    c1 = normalize_loading(1, 1; value = 1.0)
+    c2 = normalize_loading(2, 2; value = 1.0)
+    c3 = normalize_loading(3, 3; value = 1.0)
     constraints = vcat(c1, c2, c3)
 
     SUITE["ls"]["T200_n50_r3_constrained"] = @benchmarkable FactorModel(
@@ -147,9 +147,9 @@ end
 let rng = StableRNG(DEFAULT_SEED + 22)
     X = generate_factor_data_missing(rng, 200, 50, 3, 0.05)
 
-    c1 = normalize_loading(1, 1, 3; value = 1.0)
-    c2 = normalize_loading(2, 2, 3; value = 1.0)
-    c3 = normalize_loading(3, 3, 3; value = 1.0)
+    c1 = normalize_loading(1, 1; value = 1.0)
+    c2 = normalize_loading(2, 2; value = 1.0)
+    c3 = normalize_loading(3, 3; value = 1.0)
     constraints = vcat(c1, c2, c3)
 
     SUITE["ls"]["T200_n50_r3_miss_constrained"] = @benchmarkable FactorModel(
