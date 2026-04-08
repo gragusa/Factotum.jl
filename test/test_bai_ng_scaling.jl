@@ -14,7 +14,7 @@ end
 function residual_variance_path(fm::FactorModel, kmax::Int)
     x = fm.X̄
     v0 = sum(abs2, x) / length(x)
-    vk = [sum(abs2, residuals(view(fm, k))) / length(x) for k in 1:kmax]
+    vk = [sum(abs2, Factotum.residuals(view(fm, k))) / length(x) for k in 1:kmax]
     [v0; vk]
 end
 

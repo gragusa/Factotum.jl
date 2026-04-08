@@ -1288,6 +1288,13 @@ function explained_variance(fm::FactorModel)
     λ ./ total_var
 end
 
+"""
+    residuals(fm::AbstractFactorModel)
+
+Compute the residuals of the factor model, defined as `X̄ - F * Λ'` where `X̄` is the
+demeaned (and possibly scaled) data matrix, `F` is the matrix of factors, and `Λ` is the
+matrix of loadings. The result is stored in-place in `fm.residuals` and returned.
+"""
 function StatsBase.residuals(fm::AbstractFactorModel)
     F = factors(fm)
     Λ = loadings(fm)
@@ -2041,6 +2048,6 @@ export FactorModel, EstimationStats, describe,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3,
        informationcriteria, criterion,
 # Constrained factor estimation
-       LoadingConstraints, normalize_loading, zero_loading, fix_loading, identity_loading
+       LoadingConstraints, normalize_loading, zero_loading, fix_loading, identity_loading, residuals  
 
 end # module"
