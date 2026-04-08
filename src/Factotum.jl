@@ -2048,6 +2048,7 @@ export FactorModel, EstimationStats, describe,
        AIC1, AIC2, AIC3, BIC1, BIC2, BIC3,
        informationcriteria, criterion,
 # Constrained factor estimation
-       LoadingConstraints, normalize_loading, zero_loading, fix_loading, identity_loading, residuals  
+       LoadingConstraints, normalize_loading, zero_loading, fix_loading, identity_loading,
+       residuals
 
 end # module"
