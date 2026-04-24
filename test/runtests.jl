@@ -926,6 +926,7 @@ import Factotum: Tables
     end
 
     include("test_sw.jl")
+    include("test_bai_ng_scaling.jl")
 end
 
 # Aqua.jl quality assurance tests

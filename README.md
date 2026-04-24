@@ -71,6 +71,17 @@ r_opt = numfactors(ic)
 ics = informationcriteria((IC1, IC2, BIC3), fm, 10)
 ```
 
+
+## Bai-Ng Monte Carlo Validation
+
+To replicate the Bai & Ng (2002) Monte Carlo data-generating process and inspect average selected factors across criteria:
+
+```bash
+julia --project benchmark/bai_ng_monte_carlo.jl 1000 60 100 1 8
+```
+
+Arguments are: `reps T N r_true kmax`.
+
 ## Documentation
 
 See the [documentation](https://gragusa.github.io/Factotum.jl/) for detailed usage, tutorials, and API reference.
