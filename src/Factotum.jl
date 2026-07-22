@@ -137,6 +137,8 @@ struct FactorModel{E <: AbstractEstimationMethod, M <: AbstractMatrix,
     X̄::M
     "Estimation statistics"
     stats::S
+    "Loading constraints used for estimation, or `nothing`"
+    constraints
 end
 
 struct FactorModelView{M <: AbstractMatrix, L <: AbstractMatrix, V <: AbstractVector, R} <:
@@ -580,7 +582,7 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             stats) = extract_pca(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected)
         FactorModel{PCA, typeof(F), typeof(λ), typeof(stats)}(
-            F, Λ, λ, ε, μ, σₓ, Z, X, stats)
+            F, Λ, λ, ε, μ, σₓ, Z, X, stats, nothing)
     elseif actual_method == :em
         (F,
             Λ,
@@ -593,7 +595,8 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             stats) = extract_em(Z, numfactors;
             demean = demean, scale = scale, corrected = corrected,
             init = init, maxiter = maxiter, tol = tol, ic = ic)
-        FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(F, Λ, λ, ε, μ, σₓ, Z, X, stats)
+        FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(
+            F, Λ, λ, ε, μ, σₓ, Z, X, stats, nothing)
     elseif actual_method == :ls
         (F,
             Λ,
@@ -608,7 +611,7 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             nt_min = nt_min, tol = tol, maxiter = maxiter,
             orthonormalize = orthonormalize)
         FactorModel{LeastSquares, typeof(F), typeof(λ), typeof(stats)}(
-            F, Λ, λ, ε, μ, σₓ, Z, X, stats)
+            F, Λ, λ, ε, μ, σₓ, Z, X, stats, constraints)
     else
         throw(ArgumentError("Unknown method: $method. Use :auto, :pca, :em, or :ls"))
     end
@@ -1224,6 +1227,64 @@ julia> size(F)
 """
 factors(fm::AbstractFactorModel) = fm.factors
 
+"""
+    canonical_correlation(X, Y; demean=true, atol=0, rtol=nothing)
+
+Return the canonical correlations between the columns of `X` and `Y`, ordered
+from largest to smallest. Both matrices must have the same number of rows;
+rows are observations and columns are variables (or estimated factors).
+
+By default, each column is demeaned. Set `demean=false` to compare the
+uncentered column spaces. Linearly dependent columns are removed using a
+singular-value rank test, so the result has length
+`min(rank(X), rank(Y))` after optional demeaning.
+
+# Examples
+
+```jldoctest
+julia> X = [1.0 0.0; 0.0 1.0; -1.0 0.0; 0.0 -1.0];
+
+julia> Y = X * [2.0 1.0; -1.0 3.0];
+
+julia> canonical_correlation(X, Y) ≈ ones(2)
+true
+```
+"""
+function canonical_correlation(X::AbstractMatrix{<:Real},
+        Y::AbstractMatrix{<:Real}; demean::Bool = true,
+        atol::Real = 0, rtol::Union{Nothing, Real} = nothing)
+    size(X, 1) == size(Y, 1) || throw(DimensionMismatch(
+        "X and Y must have the same number of rows; got $(size(X, 1)) and $(size(Y, 1))"))
+    size(X, 1) > 0 || throw(ArgumentError("X and Y must contain at least one row"))
+    atol >= 0 || throw(ArgumentError("atol must be nonnegative"))
+    isnothing(rtol) || rtol >= 0 || throw(ArgumentError("rtol must be nonnegative"))
+
+    T = float(promote_type(eltype(X), eltype(Y)))
+    Xwork = Matrix{T}(X)
+    Ywork = Matrix{T}(Y)
+    all(isfinite, Xwork) || throw(ArgumentError("X must contain only finite values"))
+    all(isfinite, Ywork) || throw(ArgumentError("Y must contain only finite values"))
+
+    if demean
+        Xwork .-= mean(Xwork; dims = 1)
+        Ywork .-= mean(Ywork; dims = 1)
+    end
+
+    function column_basis(A)
+        S = svd(A; full = false)
+        isempty(S.S) && return S.U[:, 1:0]
+        relative_tolerance = isnothing(rtol) ? max(size(A)...) * eps(T) : rtol
+        tolerance = max(atol, relative_tolerance * first(S.S))
+        numerical_rank = count(>(tolerance), S.S)
+        S.U[:, 1:numerical_rank]
+    end
+
+    QX = column_basis(Xwork)
+    QY = column_basis(Ywork)
+    (size(QX, 2) == 0 || size(QY, 2) == 0) && return T[]
+    clamp.(svdvals(QX' * QY), zero(T), one(T))
+end
+
 LinearAlgebra.eigvals(fm::AbstractFactorModel) = fm.eigenvalues
 
 """
@@ -1255,6 +1316,34 @@ function sdev(fm::AbstractFactorModel)
 end
 
 """
+    total_variance(fm::AbstractFactorModel)
+
+Return the total variance of the model's working data matrix, computed as
+`tr(X'X/T)`.
+
+The working matrix is centered when `demean=true` and standardized column by
+column when `scale=true`. For EM and least-squares fits with missing data, it is
+the completed working matrix stored by the fitted model.
+
+# Examples
+
+```jldoctest
+julia> X = [1.0 2.0; 2.0 4.0; 3.0 6.0];
+
+julia> fm = FactorModel(X, 1; demean=true, scale=true);
+
+julia> total_variance(fm) ≈ 2.0
+true
+```
+
+See also: [`explained_variance`](@ref), [`tss`](@ref)
+"""
+function total_variance(fm::AbstractFactorModel)
+    T = size(fm.X̄, 1)
+    sum(abs2, fm.X̄) / T
+end
+
+"""
     explained_variance(fm::FactorModel)
 
 Return the proportion of total variance explained by each factor.
@@ -1281,11 +1370,8 @@ true
 ```
 """
 function explained_variance(fm::FactorModel)
-    T, _ = size(fm)
     λ = eigvals(fm)
-    # Total variance = sum of all eigenvalues of cov(X) = sum(abs2, X̄) / T
-    total_var = sum(abs2, fm.X̄) / T
-    λ ./ total_var
+    λ ./ total_variance(fm)
 end
 
 """
@@ -1417,6 +1503,9 @@ Print a detailed summary of the factor model, including:
 - Model dimensions (T × n)
 - Number of factors
 - Estimation method
+- Preprocessing and the original missing-data pattern
+- Overall fit statistics
+- Loading restrictions for constrained least-squares models
 - Factor importance table with standard deviations, proportion of variance,
   and cumulative proportion
 
@@ -1427,6 +1516,26 @@ describe(fm)
 ```
 """
 describe(fm::FactorModel) = describe(stdout, fm)
+
+function _constraint_expression(c::LoadingConstraints, row::Int)
+    series = c.series[row]
+    terms = String[]
+    for k in axes(c.R, 2)
+        coefficient = c.R[row, k]
+        iszero(coefficient) && continue
+        loading = "λ[$series,$k]"
+        term = if coefficient == 1
+            loading
+        elseif coefficient == -1
+            "-$loading"
+        else
+            "$(@sprintf("%.4g", coefficient))·$loading"
+        end
+        push!(terms, term)
+    end
+    lhs = isempty(terms) ? "0" : replace(join(terms, " + "), "+ -" => "- ")
+    "$lhs = $(@sprintf("%.4g", c.r[row]))"
+end
 
 function describe(io::IO, fm::FactorModel{E}) where {E}
     T, n = size(fm)
@@ -1450,9 +1559,40 @@ function describe(io::IO, fm::FactorModel{E}) where {E}
     # Format: 4 decimals for std dev, 2 decimals + % for variance columns
     fmt = (v, i, j) -> j == 1 ? @sprintf("%.4f", v) : @sprintf("%.2f%%", v)
 
+    nmissing = count(isnan, fm.X)
+    missing_series = count(vec(any(isnan, fm.X; dims = 1)))
+    missing_pct = 100 * nmissing / length(fm.X)
+    demeaned = any(x -> !iszero(x), fm.center)
+    scaled = any(x -> x != one(x), fm.scale)
+    overall_r2 = iszero(tss(fm)) ? NaN : 1 - ssr(fm) / tss(fm)
+
+    println(io, "Static Factor Model")
+    println(io, "  Dimensions:        $T × $n")
+    println(io, "  Factors:           $k")
+    println(io, "  Method:            $(_method_name(E))")
+    println(io, "  Preprocessing:     demean=$(demeaned), scale=$(scaled)")
+    if iszero(nmissing)
+        println(io, "  Missing values:    0 (complete panel)")
+    else
+        treatment = E <: EM ? "EM imputation" :
+                    E <: LeastSquares ? "observed-data least squares" : "unsupported"
+        println(io, "  Missing values:    $nmissing ($(missing_series) series, " *
+                    @sprintf("%.2f%%", missing_pct) * "; $treatment)")
+    end
+    println(io, "  Observations used: $(nobs(fm))")
+    println(io, "  Overall R²:        " * @sprintf("%.4f", overall_r2))
+
+    if fm.constraints !== nothing
+        constraints = fm.constraints::LoadingConstraints
+        println(io, "  Loading constraints ($(length(constraints.r))):")
+        for row in eachindex(constraints.r)
+            println(io, "    • ", _constraint_expression(constraints, row))
+        end
+    end
+    println(io)
+
     pretty_table(io, mat;
-        title = "Static Factor Model",
-        subtitle = "Dimensions: $T × $n  ⋅  Factors: $k  ⋅  Method: $(_method_name(E))",
+        title = "Factor importance",
         row_labels = row_labels,
         column_labels = ["Std. Dev.", "Prop. Variance", "Cumul. Variance"],
         formatters = [fmt],
@@ -2036,7 +2176,8 @@ function Base.show(io::IO, t::ByFactorR2)
 end
 
 export FactorModel, EstimationStats, describe,
-       numfactors, factors, loadings, explained_variance, sdev,
+       numfactors, factors, loadings, canonical_correlation,
+       total_variance, explained_variance, sdev,
 # Estimation method types and accessor
        AbstractEstimationMethod, PCA, EM, LeastSquares, estimationmethod,
 # Estimation statistics

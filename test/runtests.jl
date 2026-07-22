@@ -66,6 +66,45 @@ import Factotum: Tables
         @test numfactors(fm_raw) == 5
     end
 
+    @testset "total_variance" begin
+        rng = MersenneTwister(2027)
+        X = randn(rng, 80, 6) .* [1 2 3 4 5 6] .+ [0 1 2 3 4 5]
+
+        fm_unscaled = FactorModel(X, 3; demean = true, scale = false)
+        X_centered = X .- mean(X; dims = 1)
+        @test total_variance(fm_unscaled) ≈ tr(X_centered' * X_centered / size(X, 1))
+
+        fm_scaled = FactorModel(X, 3; demean = true, scale = true)
+        X_scaled = X_centered ./ std(X; dims = 1, corrected = false)
+        @test total_variance(fm_scaled) ≈ tr(X_scaled' * X_scaled / size(X, 1))
+        @test total_variance(fm_scaled) ≈ size(X, 2)
+
+        @test total_variance(view(fm_scaled, 2)) == total_variance(fm_scaled)
+        @test explained_variance(fm_scaled) ≈ eigvals(fm_scaled) ./ total_variance(fm_scaled)
+    end
+
+    @testset "canonical_correlation" begin
+        rng = MersenneTwister(2028)
+        X = randn(rng, 100, 3)
+        H = randn(rng, 3, 3)
+        Y = X * H
+
+        @test canonical_correlation(X, Y) ≈ ones(3)
+        @test length(canonical_correlation(X[:, 1:2], Y)) == 2
+
+        X_rank_deficient = hcat(X[:, 1], 2 .* X[:, 1])
+        @test length(canonical_correlation(X_rank_deficient, Y)) == 1
+        @test only(canonical_correlation(X_rank_deficient, Y)) ≈ 1
+
+        shifted = X .+ [10 20 30]
+        @test canonical_correlation(X, shifted) ≈ ones(3)
+        @test isempty(canonical_correlation(ones(10, 2), ones(10, 1)))
+
+        @test_throws DimensionMismatch canonical_correlation(X, Y[1:end-1, :])
+        @test_throws ArgumentError canonical_correlation(X, fill(NaN, size(Y)))
+        @test_throws ArgumentError canonical_correlation(X, Y; atol = -1)
+    end
+
     @testset "FactorModelView" begin
         X = randn(100, 10)
         fm = FactorModel(X, 5)
@@ -923,6 +962,39 @@ import Factotum: Tables
             @test size(df) == (20, 4)
             @test names(df)[1] == "Variable"
         end
+    end
+
+    @testset "describe estimation context" begin
+        X = randn(MersenneTwister(900), 40, 6)
+
+        fm_pca = FactorModel(X, 2; scale = true)
+        io = IOBuffer()
+        Factotum.describe(io, fm_pca)
+        pca_output = String(take!(io))
+        @test occursin("Method:            PCA", pca_output)
+        @test occursin("Missing values:    0 (complete panel)", pca_output)
+        @test occursin("demean=true, scale=true", pca_output)
+
+        X_missing = copy(X)
+        X_missing[1:3, 2] .= NaN
+        fm_em = FactorModel(X_missing, 2)
+        io = IOBuffer()
+        Factotum.describe(io, fm_em)
+        em_output = String(take!(io))
+        @test occursin("Method:            EM", em_output)
+        @test occursin("Missing values:    3 (1 series", em_output)
+        @test occursin("EM imputation", em_output)
+
+        constraints = vcat(normalize_loading(1, 1), zero_loading(2, 2))
+        fm_ls = FactorModel(X, 2; constraints = constraints)
+        io = IOBuffer()
+        Factotum.describe(io, fm_ls)
+        ls_output = String(take!(io))
+        @test fm_ls.constraints === constraints
+        @test occursin("Method:            LS", ls_output)
+        @test occursin("Loading constraints (2):", ls_output)
+        @test occursin("λ[1,1] = 1", ls_output)
+        @test occursin("λ[2,2] = 0", ls_output)
     end
 
     include("test_sw.jl")
