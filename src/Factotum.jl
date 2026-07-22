@@ -1576,8 +1576,9 @@ function describe(io::IO, fm::FactorModel{E}) where {E}
     else
         treatment = E <: EM ? "EM imputation" :
                     E <: LeastSquares ? "observed-data least squares" : "unsupported"
-        println(io, "  Missing values:    $nmissing ($(missing_series) series, " *
-                    @sprintf("%.2f%%", missing_pct) * "; $treatment)")
+        println(io,
+            "  Missing values:    $nmissing ($(missing_series) series, " *
+            @sprintf("%.2f%%", missing_pct) * "; $treatment)")
     end
     println(io, "  Observations used: $(nobs(fm))")
     println(io, "  Overall R²:        " * @sprintf("%.4f", overall_r2))
@@ -1771,8 +1772,7 @@ function informationcriteria(criteria::Tuple, fm, kₘₐₓ)
     map(c -> c(fm, kₘₐₓ), criteria)
 end
 
-for criterion in
-    (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
+for criterion in (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
     @eval begin
         function ($criterion)(fm, kₘₐₓ::Int64)
             informationcriterion($criterion, fm, kₘₐₓ)

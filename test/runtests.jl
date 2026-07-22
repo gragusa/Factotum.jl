@@ -80,7 +80,8 @@ import Factotum: Tables
         @test total_variance(fm_scaled) ≈ size(X, 2)
 
         @test total_variance(view(fm_scaled, 2)) == total_variance(fm_scaled)
-        @test explained_variance(fm_scaled) ≈ eigvals(fm_scaled) ./ total_variance(fm_scaled)
+        @test explained_variance(fm_scaled) ≈
+              eigvals(fm_scaled) ./ total_variance(fm_scaled)
     end
 
     @testset "canonical_correlation" begin
@@ -100,7 +101,7 @@ import Factotum: Tables
         @test canonical_correlation(X, shifted) ≈ ones(3)
         @test isempty(canonical_correlation(ones(10, 2), ones(10, 1)))
 
-        @test_throws DimensionMismatch canonical_correlation(X, Y[1:end-1, :])
+        @test_throws DimensionMismatch canonical_correlation(X, Y[1:(end - 1), :])
         @test_throws ArgumentError canonical_correlation(X, fill(NaN, size(Y)))
         @test_throws ArgumentError canonical_correlation(X, Y; atol = -1)
     end
@@ -761,8 +762,8 @@ import Factotum: Tables
             X = randn(T, n)
             X[1:10, 1:3] .= NaN
 
-            for ICType in
-                [IC1, IC2, IC3, PCp1, PCp2, PCp3, AIC1, AIC2, AIC3, BIC1, BIC2, BIC3]
+            for ICType in [
+                IC1, IC2, IC3, PCp1, PCp2, PCp3, AIC1, AIC2, AIC3, BIC1, BIC2, BIC3]
                 fm = FactorModel(X, 8; ic = ICType, scale = true)
                 @test numfactors(fm) >= 1
                 @test numfactors(fm) <= 8
