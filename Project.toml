@@ -2,7 +2,7 @@ name = "Factotum"
 uuid = "8e1400da-83f9-11ea-2c44-b3f98be75b8f"
 keywords = ["Factor"]
 license = "MIT"
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

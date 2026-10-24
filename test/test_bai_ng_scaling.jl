@@ -28,7 +28,7 @@ end
     T, N = size(fm)
 
     # IC1: log(V(k)) + k*g1(N,T)
-    g1 = [k * Factotum.penalty(IC1, T, N, k) for k in 0:kmax]
+    g1 = [k * Factotum.penalty(IC1(), T, N, k) for k in 0:kmax]
     ic1_manual = log.(V) .+ g1
     @test criterion(IC1(fm, kmax))≈ic1_manual rtol=1e-10 atol=1e-10
 
@@ -38,8 +38,8 @@ end
     @test criterion(PCp1(fm, kmax))≈pcp1_manual rtol=1e-10 atol=1e-10
 
     # Same check for IC2/IC3 and PCp2/PCp3
-    g2 = [k * Factotum.penalty(IC2, T, N, k) for k in 0:kmax]
-    g3 = [k * Factotum.penalty(IC3, T, N, k) for k in 0:kmax]
+    g2 = [k * Factotum.penalty(IC2(), T, N, k) for k in 0:kmax]
+    g3 = [k * Factotum.penalty(IC3(), T, N, k) for k in 0:kmax]
 
     @test criterion(IC2(fm, kmax))≈log.(V) .+ g2 rtol=1e-10 atol=1e-10
     @test criterion(IC3(fm, kmax))≈log.(V) .+ g3 rtol=1e-10 atol=1e-10

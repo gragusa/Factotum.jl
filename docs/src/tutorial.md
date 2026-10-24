@@ -75,8 +75,8 @@ Lambda0 = randn(rng, 20, 2)
 Z = F0 * Lambda0' + 0.3 * randn(rng, 150, 20)
 
 kmax = 6
-fm_max = FactorModel(Z, kmax; scale=true)
-results = informationcriteria((IC1, IC2, IC3, PCp1, PCp2, PCp3,
+results = informationcriteria((IC1(), IC2(), IC3(), PCp1(), PCp2(), PCp3(),
+                               AIC1(), AIC2(), AIC3(), BIC1(), BIC2(), BIC3()),
                                AIC1, AIC2, AIC3, BIC1, BIC2, BIC3),
                               fm_max, kmax)
 selected = [numfactors(ic) for ic in results]
@@ -90,7 +90,7 @@ A criterion may also be called directly on a data matrix, for example
 
 ## Missing data with EM
 
-Encode missing entries as `NaN`. The default `method=:auto` detects them and
+Encode missing entries as `NaN`. The default `method=nothing` (auto-select) detects them and
 selects EM.
 
 ```@example guide-em
@@ -134,7 +134,7 @@ using Factotum, Random
 rng = MersenneTwister(33)
 Z = randn(rng, 70, 8)
 Z[1:7, 1] .= NaN
-fm = FactorModel(Z, 4; ic=IC2, maxiter=500)
+fm = FactorModel(Z, 4; ic=IC2(), maxiter=500)
 (selected_factors = numfactors(fm), maximum_considered = 4)
 ```
 
@@ -149,7 +149,7 @@ using Factotum, LinearAlgebra, Random
 rng = MersenneTwister(41)
 Z = randn(rng, 70, 8)
 Z[1:8, 3] .= NaN
-fm = FactorModel(Z, 2; method=:ls, nt_min=10)
+fm = FactorModel(Z, 2; method=LeastSquares(), nt_min=10)
 (method = estimationmethod(fm), orthonormal = loadings(fm)'loadings(fm) ≈ I(2))
 ```
 

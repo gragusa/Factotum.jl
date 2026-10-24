@@ -50,7 +50,7 @@ fm = FactorModel(X, 5)
 fm = FactorModel(X_with_missing, 5)
 
 # Iterative Least Squares (required for constraints)
-fm = FactorModel(X, 5; method=:ls)
+fm = FactorModel(X, 5; method=LeastSquares())
 
 # Query the estimation method used
 estimationmethod(fm)  # returns PCA(), EM(), or LeastSquares()
@@ -68,7 +68,7 @@ ic = IC1(fm, 10)
 r_opt = numfactors(ic)
 
 # Compare multiple criteria
-ics = informationcriteria((IC1, IC2, BIC3), fm, 10)
+ics = informationcriteria((IC1(), IC2(), BIC3()), fm, 10)
 ```
 
 

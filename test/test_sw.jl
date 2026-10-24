@@ -6,7 +6,7 @@
     X_full = Matrix{Float64}(df[:, 2:end])
 
     ftm = Factotum.FactorModel(
-        X_full, 6; scale = true, method = :ls, orthonormalize = false)
+        X_full, 6; scale = true, method = LeastSquares(), orthonormalize = false)
 
     # Expected values from raw LS solution (no QR orthonormalization)
     expected_factors = [-1.8682 -0.3544 -0.2306 -0.0071 1.7681 -0.9233

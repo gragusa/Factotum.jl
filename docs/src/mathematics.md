@@ -195,7 +195,7 @@ Factotum.describe(fm)
 
 ### EM
 
-With `method=:em`, initially every missing observation with the mean of the available observations for that series. If ``\mathcal O_i`` is the set of observed dates for series ``i``, the initial completed panel is
+With `method=EM()`, initially every missing observation with the mean of the available observations for that series. If ``\mathcal O_i`` is the set of observed dates for series ``i``, the initial completed panel is
 
 ```math
 Z_{ti}^{(0)}=
@@ -227,13 +227,13 @@ Iterations 1-3 stop when the relative squared change in the common component,
 ```
 
 ```@example intro
-fm_em = FactorModel(X, 7; scale=true, method=:em)
+fm_em = FactorModel(X, 7; scale=true, method=EM())
 Factotum.describe(fm_em)
 ```
 
 ### Least-squares
 
-With `method=:ls`, the package instead alternates observed-data
+With `method=LeastSquares()`, the package instead alternates observed-data
 least-squares regressions:
 
 ```math
@@ -249,13 +249,13 @@ least-squares regressions:
 where ``\mathcal O_i`` and ``\mathcal O_t`` contain the observed entries for series $i$ and observation $t$. 
 
 ```@example intro
-fm_ls = FactorModel(X, 7; scale=true, method=:ls)
+fm_ls = FactorModel(X, 7; scale=true, method=LeastSquares())
 Factotum.describe(fm_ls)
 ```
 
 !!! note "Default method"
     EM is selected automatically for an incomplete panel when no loading
-    constraints are supplied. Use `method=:ls` to request observed-data least
+    constraints are supplied. Use `method=LeastSquares()` to request observed-data least
     squares explicitly.
 
 !!! note "Comparing EM and least squares"
@@ -414,7 +414,7 @@ fm_restricted = FactorModel(
     r_restricted;
     demean = true,
     scale = true,
-    method = :ls,
+    method = LeastSquares(),
     constraints = constraints,
 )
 
@@ -595,7 +595,7 @@ The Bai–Ng IC family minimizes ``\log V(k)+k\,g(N,T)``; PCp-style criteria use
 penalties. Since criteria encode different penalties, it is often useful to
 compare several rather than treating one selection mechanically.
 
-For incomplete data, `FactorModel(Z, kmax; ic=IC2)` can select ``r`` inside the
+For incomplete data, `FactorModel(Z, kmax; ic=IC2())` can select ``r`` inside the
 EM iterations. Otherwise fit ``kmax`` factors once and apply any criterion to
 that fit.
 
@@ -620,8 +620,8 @@ Several penalties can be compared from the same fitted model with
 `informationcriteria`:
 
 ```@example intro
-criterion_types = (IC1, IC2, IC3, PCp1, PCp2, PCp3, AIC1, BIC1)
-criteria = informationcriteria(criterion_types, fm, 7)
+criterion_list = (IC1(), IC2(), IC3(), PCp1(), PCp2(), PCp3(), AIC1(), BIC1())
+criteria = informationcriteria(criterion_list, fm, 7)
 DataFrame(
     Criterion = string.(criteria),
     Selected_factors = numfactors.(criteria),

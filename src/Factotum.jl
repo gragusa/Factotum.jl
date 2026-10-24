@@ -16,6 +16,8 @@ abstract type AbstractFactorModel end
 Abstract supertype for information criteria used to select the number of factors.
 
 All criteria can be called as functions: `IC1(fm, kmax)` or `IC1(X, kmax; kwargs...)`.
+Elsewhere a criterion is passed as an instance, e.g. `FactorModel(X, kmax; ic=IC2())` or
+`informationcriteria((IC1(), IC2()), fm, kmax)`.
 
 Use `numfactors(ic)` to get the optimal r, or `criterion(ic)` for all values.
 
@@ -165,7 +167,7 @@ end
 
 Linear constraints on factor loadings: `R × λᵢ = r` for specified series.
 
-Used with the `:ls` estimation method for sign normalization, zero restrictions,
+Used with the `LeastSquares()` estimation method for sign normalization, zero restrictions,
 or identification constraints.
 
 # Constructors
@@ -417,25 +419,27 @@ function FactorModel(Z::AbstractMatrix{G}; kwargs...) where {G}
 end
 
 """
-    FactorModel(Z, numfactors; demean=true, scale=false, method=:auto, ...)
+    FactorModel(Z, numfactors; demean=true, scale=false, method=nothing, ...)
 
 Estimate a static factor model ``X = FΛ' + ε`` where `F` is T×r factors and `Λ` is n×r loadings.
 
-The method is auto-selected based on data and constraints:
-- Complete data, no constraints → PCA
-- Missing values (NaN) → EM algorithm
-- Constraints provided → Iterative Least Squares
+With `method=nothing` the method is auto-selected based on data and constraints:
+- Complete data, no constraints → `PCA()`
+- Missing values (NaN) → `EM()`
+- Constraints provided → `LeastSquares()`
 
 # Arguments
 - `Z::AbstractMatrix`: T×n data matrix (rows=observations, columns=variables)
 - `numfactors::Int`: number of factors r to extract
 - `demean::Bool=true`: center columns by their means
 - `scale::Bool=false`: standardize columns to unit variance
-- `method::Symbol=:auto`: force `:pca`, `:em`, or `:ls` (default: auto-select)
-- `constraints::LoadingConstraints=nothing`: linear constraints on loadings (requires `:ls`)
+- `method::Union{Nothing,AbstractEstimationMethod}=nothing`: force `PCA()`, `EM()`, or
+  `LeastSquares()` (default: auto-select)
+- `constraints::LoadingConstraints=nothing`: linear constraints on loadings (requires
+  `LeastSquares()`)
 - `maxiter::Int=1000`: max iterations for EM/LS algorithms
 - `tol::Float64=1e-8`: convergence tolerance
-- `ic::Union{Nothing,Type{<:AbstractInformationCriterion}}=nothing`: if set (e.g., `IC2`),
+- `ic::Union{Nothing,AbstractInformationCriterion}=nothing`: if set (e.g., `IC2()`),
   use IC-adaptive factor selection inside the EM loop. `numfactors` acts as `kmax` and the
   IC selects `r` at each iteration. Only active when the EM algorithm runs (i.e., data has
   missing values). Cannot be combined with constraints or non-EM methods.
@@ -503,9 +507,11 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
         demean::Bool = true, scale::Bool = false, corrected::Bool = false,
         init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
         constraints::Union{Nothing, LoadingConstraints} = nothing,
-        method::Symbol = :auto, nt_min::Int = 10,
+        method = nothing, nt_min::Int = 10,
         orthonormalize::Bool = true,
-        ic::Union{Nothing, Type{<:AbstractInformationCriterion}} = nothing) where {G}
+        ic = nothing) where {G}
+    method = _check_method(method)
+    ic = _check_criterion(ic)
     T, n = size(Z)
     T == 0 && throw(ArgumentError("Input matrix must not be empty (got size $(size(Z)))"))
     numfactors < 0 &&
@@ -538,39 +544,36 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
     end
 
     # Determine method
-    actual_method = if method == :auto
+    actual_method = if method === nothing
         if has_constraints
-            :ls  # Constraints require iterative LS
+            LeastSquares()  # Constraints require iterative LS
         elseif has_missing
-            :em  # Missing data requires EM or LS
+            EM()  # Missing data requires EM or LS
         else
-            :pca
+            PCA()
         end
     else
         method
     end
 
     # Validate ic with explicit method choice
-    if ic !== nothing
-        actual_method == :pca &&
-            throw(ArgumentError("ic cannot be used with method=:pca. IC-adaptive selection requires the EM algorithm"))
-        actual_method == :ls &&
-            throw(ArgumentError("ic cannot be used with method=:ls. IC-adaptive selection requires the EM algorithm"))
+    if ic !== nothing && !(actual_method isa EM)
+        throw(ArgumentError("ic cannot be used with method=$(actual_method). IC-adaptive selection requires method=EM()"))
     end
 
     # Validate method choice
-    if actual_method == :pca
+    if actual_method isa PCA
         has_missing &&
-            throw(ArgumentError("PCA method cannot handle missing values. Use method=:em or method=:ls"))
+            throw(ArgumentError("PCA method cannot handle missing values. Use method=EM() or method=LeastSquares()"))
         has_constraints &&
-            throw(ArgumentError("PCA method does not support constraints. Use method=:ls"))
-    elseif actual_method == :em
+            throw(ArgumentError("PCA method does not support constraints. Use method=LeastSquares()"))
+    elseif actual_method isa EM
         has_constraints &&
-            throw(ArgumentError("EM method does not support constraints. Use method=:ls"))
+            throw(ArgumentError("EM method does not support constraints. Use method=LeastSquares()"))
     end
 
     # Estimate and construct with appropriate type parameter
-    if actual_method == :pca
+    if actual_method isa PCA
         (F,
             Λ,
             λ,
@@ -583,7 +586,7 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             demean = demean, scale = scale, corrected = corrected)
         FactorModel{PCA, typeof(F), typeof(λ), typeof(stats)}(
             F, Λ, λ, ε, μ, σₓ, Z, X, stats, nothing)
-    elseif actual_method == :em
+    elseif actual_method isa EM
         (F,
             Λ,
             λ,
@@ -597,7 +600,7 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
             init = init, maxiter = maxiter, tol = tol, ic = ic)
         FactorModel{EM, typeof(F), typeof(λ), typeof(stats)}(
             F, Λ, λ, ε, μ, σₓ, Z, X, stats, nothing)
-    elseif actual_method == :ls
+    elseif actual_method isa LeastSquares
         (F,
             Λ,
             λ,
@@ -613,8 +616,31 @@ function FactorModel(Z::AbstractMatrix{G}, numfactors;
         FactorModel{LeastSquares, typeof(F), typeof(λ), typeof(stats)}(
             F, Λ, λ, ε, μ, σₓ, Z, X, stats, constraints)
     else
-        throw(ArgumentError("Unknown method: $method. Use :auto, :pca, :em, or :ls"))
+        throw(ArgumentError("Unsupported estimation method $(actual_method). Use PCA(), EM(), or LeastSquares()"))
     end
+end
+
+# Methods and information criteria are passed as instances (`EM()`, `IC2()`);
+# these checks turn the common type or Symbol forms into an explanatory error.
+_check_method(m::Union{Nothing, AbstractEstimationMethod}) = m
+function _check_method(m::Type{<:AbstractEstimationMethod})
+    throw(ArgumentError("method must be an instance: use method=$(nameof(m))() instead of method=$(nameof(m))"))
+end
+function _check_method(m::Symbol)
+    hint = get((pca = "PCA()", em = "EM()", ls = "LeastSquares()", auto = "nothing"), m,
+        "PCA(), EM(), LeastSquares(), or nothing (auto-select)")
+    throw(ArgumentError("method must be an estimation method instance, not a Symbol: use method=$hint instead of method=:$m"))
+end
+function _check_method(m)
+    throw(ArgumentError("method must be PCA(), EM(), LeastSquares(), or nothing (auto-select); got $(repr(m))"))
+end
+
+_check_criterion(c::Union{Nothing, AbstractInformationCriterion}) = c
+function _check_criterion(c::Type{<:AbstractInformationCriterion})
+    throw(ArgumentError("information criteria must be instances: use $(nameof(c))() instead of $(nameof(c))"))
+end
+function _check_criterion(c)
+    throw(ArgumentError("expected an information criterion such as IC2(), got $(repr(c))"))
 end
 
 function extract_pca(
@@ -771,7 +797,7 @@ Same tuple as extract_ΛΛ/extract_FF: (F, Λ, λ, ε, μ, σₓ, Z, X)
 function extract_em(Z, numfactors;
         demean::Bool = true, scale::Bool = false, corrected::Bool = false,
         init = nanmean, maxiter::Int = 1000, tol::Float64 = 1e-8,
-        ic::Union{Nothing, Type{<:AbstractInformationCriterion}} = nothing)
+        ic::Union{Nothing, AbstractInformationCriterion} = nothing)
     T, n = size(Z)
 
     # 1. Identify missing values
@@ -780,8 +806,8 @@ function extract_em(Z, numfactors;
     missing_indices = findall(missing_mask)
 
     # IC-adaptive mode: numfactors acts as kmax, IC selects r per iteration
-    # Only active when ic !== nothing AND there are missing values (EM loop runs)
-    ic_adaptive = ic !== nothing && has_missing
+    # Only active when ic !== nothing AND there are missing values (EM loop runs).
+    # The checks test `ic !== nothing` directly so the compiler narrows `ic`.
     kmax = numfactors  # PCA always uses kmax columns
 
     # 2. Fill missing values with unconditional column means in raw data
@@ -811,7 +837,7 @@ function extract_em(Z, numfactors;
         (F, Λ, λ) = _pca(X, kmax)
 
         # For IC-adaptive: select r and use only r factors for chat
-        if ic_adaptive
+        if ic !== nothing
             r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
             chat = @views F[:, 1:r_selected] * Λ[:, 1:r_selected]'
         else
@@ -843,7 +869,7 @@ function extract_em(Z, numfactors;
             (F, Λ, λ) = _pca(X, kmax)
 
             # For IC-adaptive: select r and use only r factors for chat
-            if ic_adaptive
+            if ic !== nothing
                 r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
                 chat = @views F[:, 1:r_selected] * Λ[:, 1:r_selected]'
             else
@@ -871,7 +897,7 @@ function extract_em(Z, numfactors;
     (F, Λ, λ) = _pca(X, kmax)
 
     # For IC-adaptive: do a final IC selection and trim to selected r
-    if ic_adaptive
+    if has_missing && ic !== nothing
         r_selected = _select_numfactors_ic(ic, X, F, Λ, kmax)
         F = F[:, 1:r_selected]
         Λ = Λ[:, 1:r_selected]
@@ -1453,7 +1479,7 @@ julia> fm = FactorModel(X, 3);
 julia> estimationmethod(fm)
 PCA()
 
-julia> fm_ls = FactorModel(X, 3; method=:ls);
+julia> fm_ls = FactorModel(X, 3; method=LeastSquares());
 
 julia> estimationmethod(fm_ls)
 LeastSquares()
@@ -1657,24 +1683,26 @@ end
 
 V(fm::FactorModel, kₘₐₓ) = [V(view(fm, j)) for j in 1:kₘₐₓ]
 
-variance_factor(::Type{M}, fm, kₘₐₓ) where {M <: Union{IC1, IC2, IC3}} = 1.0
-function variance_factor(::Type{M}, fm, kₘₐₓ) where {M <: AbstractInformationCriterion}
+Base.broadcastable(c::AbstractInformationCriterion) = Ref(c)
+
+variance_factor(::Union{IC1, IC2, IC3}, fm, kₘₐₓ) = 1.0
+function variance_factor(::AbstractInformationCriterion, fm, kₘₐₓ)
     V(view(fm, kₘₐₓ))
 end ## This is probably transform
-transform_V(::Type{M}, V) where {M <: Union{IC1, IC2, IC3}} = log.(V)
-transform_V(::Type{M}, V) where {M <: AbstractInformationCriterion} = V
+transform_V(::Union{IC1, IC2, IC3}, V) = log.(V)
+transform_V(::AbstractInformationCriterion, V) = V
 
 """
-    _select_numfactors_ic(ICType, X, F, Λ, kmax) -> Int
+    _select_numfactors_ic(ic, X, F, Λ, kmax) -> Int
 
-Internal helper: select the number of factors via information criterion `ICType`
+Internal helper: select the number of factors via information criterion `ic`
 using pre-computed PCA results (F, Λ from `_pca(X, kmax)`).
 
 Returns the optimal number of factors (at least 1).
 """
 function _select_numfactors_ic(
-        ::Type{M}, X::AbstractMatrix, F::AbstractMatrix,
-        Λ::AbstractMatrix, kmax::Int) where {M <: AbstractInformationCriterion}
+        ic::AbstractInformationCriterion, X::AbstractMatrix, F::AbstractMatrix,
+        Λ::AbstractMatrix, kmax::Int)
     T, n = size(X)
     nobs = T * n
 
@@ -1693,13 +1721,13 @@ function _select_numfactors_ic(
     VV = [V0; Vk]  # length kmax+1, indices correspond to k=0..kmax
 
     # Apply transform (log for IC1/IC2/IC3, identity for PCp/AIC/BIC)
-    Vₖ = transform_V.(M, VV)
+    Vₖ = transform_V.(ic, VV)
 
     # Variance factor (1.0 for IC1/IC2/IC3, V(kmax) for others)
-    σ̂² = M <: Union{IC1, IC2, IC3} ? 1.0 : Vk[kmax]
+    σ̂² = ic isa Union{IC1, IC2, IC3} ? 1.0 : Vk[kmax]
 
     # Penalty
-    gₜₙ = map(k -> k * penalty(M, T, n, k), 0:kmax)
+    gₜₙ = map(k -> k * penalty(ic, T, n, k), 0:kmax)
 
     # Criterion values for k = 0..kmax
     crit = Vₖ .+ σ̂² .* gₜₙ
@@ -1711,7 +1739,7 @@ function _select_numfactors_ic(
 end
 
 function informationcriterion(
-        s::Type{M}, fm::FactorModel, kₘₐₓ::Int64) where {M <: AbstractInformationCriterion}
+        s::AbstractInformationCriterion, fm::FactorModel, kₘₐₓ::Int64)
     kₘₐₓ <= 0 && throw(ArgumentError("kₘₐₓ must be positive (got $kₘₐₓ)"))
     kₘₐₓ > numfactors(fm) &&
         throw(ArgumentError("kₘₐₓ ($kₘₐₓ) exceeds number of factors in model ($(numfactors(fm)))"))
@@ -1721,7 +1749,7 @@ function informationcriterion(
     VV = [NaNStatistics.nansum(abs2.(fm.X̄)) / count(!isnan, fm.X̄); V(fm, kₘₐₓ)]
     Vₖ = transform_V.(s, VV)
     gₜₙ = map(k -> k*penalty(s, T, n, k), 0:last(rnge))
-    InformationCriterion(M(), Vₖ + σ̂² .* gₜₙ, 0:last(rnge))
+    InformationCriterion(s, Vₖ + σ̂² .* gₜₙ, 0:last(rnge))
 end
 
 """
@@ -1729,7 +1757,8 @@ end
 
 Compute multiple information criteria simultaneously for model selection.
 
-Returns a tuple of `InformationCriterion` objects, one per criterion type.
+`criteria` is a tuple of criterion instances, such as `(IC1(), IC2())`.
+Returns a tuple of `InformationCriterion` objects, one per criterion.
 
 # Examples
 
@@ -1738,7 +1767,7 @@ julia> X = randn(100, 20);
 
 julia> fm = FactorModel(X, 8);
 
-julia> ics = informationcriteria((IC1, IC2, BIC1), fm, 8);
+julia> ics = informationcriteria((IC1(), IC2(), BIC1()), fm, 8);
 
 julia> length(ics)
 3
@@ -1754,7 +1783,7 @@ julia> X = randn(100, 20);
 
 julia> fm = FactorModel(X, 5);
 
-julia> ics = informationcriteria((IC1, IC2), fm, 5);
+julia> ics = informationcriteria((IC1(), IC2()), fm, 5);
 
 julia> results = findmin(ics);
 
@@ -1765,21 +1794,18 @@ julia> length(results)
 See also: [`IC1`](@ref), [`IC2`](@ref), [`IC3`](@ref), [`criterion`](@ref), [`numfactors`](@ref)
 """
 function informationcriteria(criteria::Tuple, fm, kₘₐₓ)
-    for c in criteria
-        isa(c(), AbstractInformationCriterion) ||
-            throw(ArgumentError("$(c) is not an AbstractInformationCriterion"))
-    end
-    map(c -> c(fm, kₘₐₓ), criteria)
+    foreach(_check_criterion, criteria)
+    map(c -> informationcriterion(c, fm, kₘₐₓ), criteria)
 end
 
 for criterion in (:BIC1, :BIC2, :BIC3, :AIC1, :AIC2, :AIC3, :IC1, :IC2, :IC3, :PCp1, :PCp2, :PCp3)
     @eval begin
         function ($criterion)(fm, kₘₐₓ::Int64)
-            informationcriterion($criterion, fm, kₘₐₓ)
+            informationcriterion($criterion(), fm, kₘₐₓ)
         end
         Base.string(::($criterion)) = $(string(criterion))
         function ($criterion)(X::Matrix, kₘₐₓ::Int64; kwargs...)
-            informationcriterion($criterion, FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
+            informationcriterion($criterion(), FactorModel(X, kₘₐₓ; kwargs...), kₘₐₓ)
         end
     end
 end
@@ -1866,7 +1892,7 @@ function Base.show(io::IO, ic::Tuple{
         highlighters = highlights)
 end
 
-function penalty(s::Type{P}, T, N) where {P <: Union{IC1, PCp1}}
+function penalty(::Union{IC1, PCp1}, T, N)
     NtT = N*T
     NpT = N+T
     p1 = NpT/NtT
@@ -1874,7 +1900,7 @@ function penalty(s::Type{P}, T, N) where {P <: Union{IC1, PCp1}}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N) where {P <: Union{IC2, PCp2}}
+function penalty(::Union{IC2, PCp2}, T, N)
     C2 = min(T, N)
     NtT = N*T
     NpT = N+T
@@ -1883,20 +1909,20 @@ function penalty(s::Type{P}, T, N) where {P <: Union{IC2, PCp2}}
     p1*p2
 end
 
-function penalty(s::Type{P}, T, N) where {P <: Union{IC3, PCp3}}
+function penalty(::Union{IC3, PCp3}, T, N)
     C2 = min(T, N)
     log(C2)/C2
 end
 
-penalty(s::Type{S}, T, N, k) where {S} = penalty(s, T, N)
+penalty(s::AbstractInformationCriterion, T, N, k) = penalty(s, T, N)
 
-penalty(s::Type{AIC1}, T, N) = 2/T
-penalty(s::Type{AIC2}, T, N) = 2/N
-penalty(s::Type{AIC3}, T, N, k) = 2*(N+T-k)/(N*T)
+penalty(::AIC1, T, N) = 2/T
+penalty(::AIC2, T, N) = 2/N
+penalty(::AIC3, T, N, k) = 2*(N+T-k)/(N*T)
 
-penalty(s::Type{BIC1}, T, N) = log(T)/T
-penalty(s::Type{BIC2}, T, N) = log(N)/N
-penalty(s::Type{BIC3}, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
+penalty(::BIC1, T, N) = log(T)/T
+penalty(::BIC2, T, N) = log(N)/N
+penalty(::BIC3, T, N, k) = ((N+T-k)*log(N*T))/(N*T)
 
 ## ------------------------------------------------------------
 ## R² Display Types and Functions

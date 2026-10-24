@@ -170,7 +170,7 @@ import Factotum: Tables
         @test haskey(result, :r)
 
         # Test informationcriteria with tuple
-        ics = Factotum.informationcriteria((IC1, IC2), fm, 10)
+        ics = Factotum.informationcriteria((IC1(), IC2()), fm, 10)
         @test length(ics) == 2
 
         results = findmin(ics)
@@ -199,8 +199,8 @@ import Factotum: Tables
         df = CSV.read(datapath, DataFrame)
         X_full = Matrix{Float64}(df[:, 2:end])
 
-        fm_em = FactorModel(X_full, 10; method = :em, scale = true)
-        fm_ls = FactorModel(X_full, 10; method = :ls, scale = true)
+        fm_em = FactorModel(X_full, 10; method = EM(), scale = true)
+        fm_ls = FactorModel(X_full, 10; method = LeastSquares(), scale = true)
 
         ic_em = IC1(fm_em, 10)
         ic_ls = IC1(fm_ls, 10)
@@ -249,7 +249,7 @@ import Factotum: Tables
         X = randn(100, 10)
 
         fm_standard = FactorModel(X, 3; scale = true)
-        fm_em = FactorModel(X, 3; scale = true, method = :em)
+        fm_em = FactorModel(X, 3; scale = true, method = EM())
 
         # Results should be very close (up to sign flips in factors/loadings)
         @test numfactors(fm_standard) == numfactors(fm_em)
@@ -379,8 +379,9 @@ import Factotum: Tables
         T, n, r = 100, 20, 3
         X = randn(T, n)
 
-        fm_em = FactorModel(X, r; method = :em, scale = true, tol = 1e-10, maxiter = 2000)
-        fm_ls = FactorModel(X, r; method = :ls, scale = true, tol = 1e-10, maxiter = 2000)
+        fm_em = FactorModel(X, r; method = EM(), scale = true, tol = 1e-10, maxiter = 2000)
+        fm_ls = FactorModel(
+            X, r; method = LeastSquares(), scale = true, tol = 1e-10, maxiter = 2000)
 
         # Eigenvalues should be approximately equal
         @test eigvals(fm_em) ≈ eigvals(fm_ls) rtol=0.1
@@ -419,9 +420,9 @@ import Factotum: Tables
         end
 
         fm_em = FactorModel(
-            X_missing, r; method = :em, scale = true, tol = 1e-10, maxiter = 2000)
+            X_missing, r; method = EM(), scale = true, tol = 1e-10, maxiter = 2000)
         fm_ls = FactorModel(
-            X_missing, r; method = :ls, scale = true, tol = 1e-10, maxiter = 2000)
+            X_missing, r; method = LeastSquares(), scale = true, tol = 1e-10, maxiter = 2000)
 
         # EM imputes missing values, LS does not (by design)
         @test !any(isnan, fm_em.X̄)
@@ -443,7 +444,7 @@ import Factotum: Tables
         T, n, r = 100, 10, 3
         X = randn(T, n)
 
-        fm = FactorModel(X, r; method = :ls)
+        fm = FactorModel(X, r; method = LeastSquares())
 
         @test numfactors(fm) == r
         @test size(factors(fm)) == (T, r)
@@ -592,16 +593,33 @@ import Factotum: Tables
         c = normalize_loading(1, 1)
 
         # PCA with missing data should error
-        @test_throws ArgumentError FactorModel(X_missing, r; method = :pca)
+        @test_throws ArgumentError FactorModel(X_missing, r; method = PCA())
 
         # PCA with constraints should error
-        @test_throws ArgumentError FactorModel(X, r; method = :pca, constraints = c)
+        @test_throws ArgumentError FactorModel(X, r; method = PCA(), constraints = c)
 
         # EM with constraints should error
-        @test_throws ArgumentError FactorModel(X, r; method = :em, constraints = c)
+        @test_throws ArgumentError FactorModel(X, r; method = EM(), constraints = c)
 
         # Invalid method should error
         @test_throws ArgumentError FactorModel(X, r; method = :invalid)
+        @test_throws ArgumentError FactorModel(X, r; method = "em")
+
+        # Methods and criteria are instances; types and Symbols are rejected
+        @test_throws "use method=EM() instead of method=:em" FactorModel(
+            X, r; method = :em)
+        @test_throws "use method=nothing instead of method=:auto" FactorModel(
+            X, r; method = :auto)
+        @test_throws "use method=PCA() instead of method=PCA" FactorModel(
+            X, r; method = PCA)
+        @test_throws "use IC2() instead of IC2" FactorModel(X_missing, r; ic = IC2)
+        fm = FactorModel(X, r)
+        @test_throws "use IC1() instead of IC1" informationcriteria((IC1, IC2()), fm, r)
+        @test_throws "expected an information criterion" informationcriteria((1,), fm, r)
+
+        # An explicit method fixes the concrete return type
+        @test FactorModel(X, r; method = EM()) isa FactorModel{EM}
+        @test (@inferred FactorModel(X, r; method = PCA())) isa FactorModel{PCA}
     end
 
     @testset "Constraint validation" begin
@@ -623,17 +641,17 @@ import Factotum: Tables
         r = 3
 
         # Test PCA method type
-        fm_pca = FactorModel(X, r; method = :pca)
+        fm_pca = FactorModel(X, r; method = PCA())
         @test estimationmethod(fm_pca) isa PCA
         @test estimationmethod(fm_pca) == PCA()
 
         # Test EM method type
-        fm_em = FactorModel(X, r; method = :em)
+        fm_em = FactorModel(X, r; method = EM())
         @test estimationmethod(fm_em) isa EM
         @test estimationmethod(fm_em) == EM()
 
         # Test LeastSquares method type
-        fm_ls = FactorModel(X, r; method = :ls)
+        fm_ls = FactorModel(X, r; method = LeastSquares())
         @test estimationmethod(fm_ls) isa LeastSquares
         @test estimationmethod(fm_ls) == LeastSquares()
 
@@ -664,21 +682,21 @@ import Factotum: Tables
         r = 3
 
         # Test PCA output
-        fm_pca = FactorModel(X, r; method = :pca)
+        fm_pca = FactorModel(X, r; method = PCA())
         io = IOBuffer()
         show(io, fm_pca)
         output = String(take!(io))
         @test occursin("PCA", output)
 
         # Test EM output
-        fm_em = FactorModel(X, r; method = :em)
+        fm_em = FactorModel(X, r; method = EM())
         io = IOBuffer()
         show(io, fm_em)
         output = String(take!(io))
         @test occursin("EM", output)
 
         # Test LS output
-        fm_ls = FactorModel(X, r; method = :ls)
+        fm_ls = FactorModel(X, r; method = LeastSquares())
         io = IOBuffer()
         show(io, fm_ls)
         output = String(take!(io))
@@ -691,9 +709,9 @@ import Factotum: Tables
         r = 3
 
         # Test that we can dispatch on the estimation method type
-        fm_pca = FactorModel(X, r; method = :pca)
-        fm_em = FactorModel(X, r; method = :em)
-        fm_ls = FactorModel(X, r; method = :ls)
+        fm_pca = FactorModel(X, r; method = PCA())
+        fm_em = FactorModel(X, r; method = EM())
+        fm_ls = FactorModel(X, r; method = LeastSquares())
 
         # Define a test function that dispatches on method type
         test_dispatch(::FactorModel{PCA}) = :pca
@@ -718,7 +736,7 @@ import Factotum: Tables
             X[mask] .= NaN
 
             kmax = 15
-            fm = FactorModel(X, kmax; ic = IC2, scale = true)
+            fm = FactorModel(X, kmax; ic = IC2(), scale = true)
 
             # Should have fewer factors than kmax
             @test numfactors(fm) < kmax
@@ -749,7 +767,7 @@ import Factotum: Tables
             mask = rand(T, n) .< 0.05
             X[mask] .= NaN
 
-            fm = FactorModel(X, 12; ic = IC1, scale = true)
+            fm = FactorModel(X, 12; ic = IC1(), scale = true)
 
             # IC should select something close to the true r
             @test numfactors(fm) >= r_true - 1
@@ -764,7 +782,7 @@ import Factotum: Tables
 
             for ICType in [
                 IC1, IC2, IC3, PCp1, PCp2, PCp3, AIC1, AIC2, AIC3, BIC1, BIC2, BIC3]
-                fm = FactorModel(X, 8; ic = ICType, scale = true)
+                fm = FactorModel(X, 8; ic = ICType(), scale = true)
                 @test numfactors(fm) >= 1
                 @test numfactors(fm) <= 8
                 @test !any(isnan, factors(fm))
@@ -789,24 +807,24 @@ import Factotum: Tables
             X = randn(100, 15)
 
             # No missing data => no EM loop => ic is ignored, model has numfactors factors
-            fm = FactorModel(X, 5; ic = IC2, method = :em)
+            fm = FactorModel(X, 5; ic = IC2(), method = EM())
             @test numfactors(fm) == 5
         end
 
         @testset "Validation: ic with constraints errors" begin
             X = randn(50, 10)
             c = normalize_loading(1, 1)
-            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, constraints = c)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1(), constraints = c)
         end
 
-        @testset "Validation: ic with :pca errors" begin
+        @testset "Validation: ic with PCA() errors" begin
             X = randn(50, 10)
-            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, method = :pca)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1(), method = PCA())
         end
 
-        @testset "Validation: ic with :ls errors" begin
+        @testset "Validation: ic with LeastSquares() errors" begin
             X = randn(50, 10)
-            @test_throws ArgumentError FactorModel(X, 3; ic = IC1, method = :ls)
+            @test_throws ArgumentError FactorModel(X, 3; ic = IC1(), method = LeastSquares())
         end
     end
 
