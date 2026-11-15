@@ -9,7 +9,7 @@ with λ_ij, F_tj, e_it ~ i.i.d. N(0,1).
 
 This script evaluates factor-number criteria implemented in Factotum.jl and reports:
 - mean selected number of factors
-- hit rate (Pr(\hat r = r_true))
+- hit rate (Pr(\\hat r = r_true))
 """
 
 using Factotum
@@ -21,7 +21,7 @@ const DEFAULT_CRITERIA = (
     IC1, IC2, IC3,
     PCp1, PCp2, PCp3,
     AIC1, AIC2, AIC3,
-    BIC1, BIC2, BIC3,
+    BIC1, BIC2, BIC3
 )
 
 """
@@ -34,8 +34,8 @@ function simulate_bai_ng_dgp(
         T::Int,
         N::Int,
         r::Int;
-        θ::Float64 = 1.0,
-    )
+        θ::Float64 = 1.0
+)
     F = randn(rng, T, r)
     Λ = randn(rng, N, r)
     ε = randn(rng, T, N)
@@ -57,8 +57,8 @@ function monte_carlo_bai_ng(
         θ::Float64 = 1.0,
         seed::Int = 20260325,
         scale::Bool = false,
-        criteria::Tuple = DEFAULT_CRITERIA,
-    )
+        criteria::Tuple = DEFAULT_CRITERIA
+)
     reps > 0 || throw(ArgumentError("reps must be positive"))
     0 < r_true <= kmax || throw(ArgumentError("r_true must satisfy 0 < r_true <= kmax"))
 
@@ -78,15 +78,16 @@ function monte_carlo_bai_ng(
         rs = selected[C]
         summary[C] = (
             mean_r = mean(rs),
-            hit_rate = mean(==(r_true), rs),
+            hit_rate = mean(==(r_true), rs)
         )
     end
 
     return (
-        config = (reps = reps, T = T, N = N, r_true = r_true, kmax = kmax, θ = θ, scale = scale,
+        config = (
+            reps = reps, T = T, N = N, r_true = r_true, kmax = kmax, θ = θ, scale = scale,
             seed = seed),
         summary = summary,
-        selections = selected,
+        selections = selected
     )
 end
 
